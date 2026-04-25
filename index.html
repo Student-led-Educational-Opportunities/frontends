@@ -183,7 +183,7 @@
     </div>
     <div id="sync-overlay">
         <div style="font-weight: bold; margin-bottom: 10px; display: flex; justify-content: space-between;">
-            <span>SlungaCloud</span>
+            <span>SlungaCloud Game Saves</span>
             <span id="sync-indicator" style="color: #10b981;">Ready</span>
         </div>
         <input type="text" id="sync-token" class="sync-input" placeholder="Token (leave blank to create new)">
@@ -405,6 +405,8 @@
                 }
 
                 if (game.type === "proxy") {
+                    alert("Proxy type games are currently broken.");
+                    return;
                     b.classList.add("loading");
 
                     //const xor = game.url.split('').map((c, i) => i % 2 ? String.fromCharCode(c.charCodeAt(0) ^ 2) : c).join('');
