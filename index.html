@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Launcher</title>
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            overflow-x: hidden;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+
+        .search-container {
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            background: #111;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        #filterInput {
+            width: 100%;
+            max-width: 600px;
+            padding: 15px 25px;
+            font-size: 1.2rem;
+            border-radius: 30px;
+            border: 1px solid #333;
+            background: #222;
+            color: white;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        #filterInput:focus {
+            border-color: #555;
+        }
+
+        #grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            padding: 30px;
+            justify-content: center;
+        }
+
+        .btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            aspect-ratio: 2 / 1;
+            width: 100%;
+            font-size: 1rem;
+            font-weight: 400;
+            text-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            text-decoration: none !important;
+            transition: filter 0.3s, transform 0.2s, box-shadow 0.2s;
+            border: none;
+            text-align: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .btn:hover {
+            filter: brightness(1.2);
+            transform: scale(1.03);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        .btn.hidden {
+            display: none;
+        }
+
+        .loading {
+            cursor: wait;
+            opacity: 0.8;
+            pointer-events: none;
+        }
+
+        .error-msg {
+            color: #fff;
+            padding: 40px;
+            text-align: center;
+            font-family: monospace;
+            font-size: 1.5rem;
+            grid-column: 1 / -1;
+        }
+
+        .embed-wrapper {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 10px;
+            background: transparent;
+        }
+
+        .widget-iframe {
+            width: 270px;
+            height: 150px;
+            border: none;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            overflow: hidden;
+        }
+
+        /* Cloud Sync Widget Styling */
+        #sync-overlay {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #1e293b;
+            padding: 15px;
+            border: 1px solid #334155;
+            color: white;
+            width: 280px;
+            z-index: 1000;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+        }
+
+        #sync-status {
+            font-size: 0.8rem;
+            margin: 8px 0;
+            color: #94a3b8;
+        }
+
+        .sync-input {
+            width: 100%;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #334155;
+            background: #0f172a;
+            color: white;
+            margin-bottom: 8px;
+            box-sizing: border-box;
+        }
+
+        .sync-btn {
+            width: 100%;
+            padding: 8px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .sync-progress-bg {
+            background: #334155;
+            height: 8px;
+            border-radius: 4px;
+            overflow: hidden;
+            display: none;
+        }
+
+        .sync-progress-fill {
+            background: #10b981;
+            width: 0%;
+            height: 100%;
+            transition: width 0.1s;
+        }
+    </style>
+</head>
+
+<body>
+    <script type="text/javascript"
+        src="https://cdn.jsdelivr.net/npm/@configcat/sdk@latest/dist/configcat.browser.umd.min.js"></script>
+    <div class="search-container">
+        <input type="text" id="filterInput" placeholder="Search games...">
+    </div>
+    <div id="grid"></div>
+    <div class="embed-wrapper">
+        <iframe src="https://slunga.westus2.cloudapp.azure.com/widgets/rate.html" class="widget-iframe" loading="lazy"
+            title="Rating Widget">
+        </iframe>
+    </div>
+    <div id="sync-overlay">
+        <div style="font-weight: bold; margin-bottom: 10px; display: flex; justify-content: space-between;">
+            <span>SlungaCloud</span>
+            <span id="sync-indicator" style="color: #10b981;">Ready</span>
+        </div>
+        <input type="text" id="sync-token" class="sync-input" placeholder="Enter Token to Restore">
+        <button onclick="backupData()" class="sync-btn" style="background: #3b82f6;">↑ Backup to SlungaCloud</button>
+        <button onclick="restoreData()" class="sync-btn" style="background: #10b981;">↓ Load from SlungaCloud</button>
+        <div id="sync-status">Ready to sync</div>
+        <div id="sync-progress-container" class="sync-progress-bg">
+            <div id="sync-progress-bar" class="sync-progress-fill"></div>
+        </div>
+    </div>
+    <script type="module">
+        const logger = configcat.createConsoleLogger(configcat.LogLevel.Info); // Set the log level to INFO to track how your feature flags were evaluated. When moving to production, you can remove this line to avoid too detailed logging.
+
+        const configCatClient = configcat.getClient("configcat-sdk-1/4ZveCKjyH0mHYVd1M0wDSQ/wdIMuHzTEEGrsBBY3oyNcQ", // <-- This is the actual SDK Key for your Main environment
+            configcat.PollingMode.AutoPoll,
+            {
+                logger: logger
+            });
+        const DEFAULT_KEY = 0xa5c3f17d;
+        const DEFAULT_DATA_KEY = "games-chunk-data-v1";
+        const CHUNK_DATA_MAGIC = new TextEncoder().encode("GDCHUNK1");
+        const CHUNK_DATA_IV_BYTES = 12;
+        const CHUNK_DATA_TAG_BYTES = 16;
+
+        const toHex4 = (v) => (v & 0xffff).toString(16).padStart(4, "0");
+        const toHex8 = (v) => (v >>> 0).toString(16).padStart(8, "0");
+        const rotl32 = (x, b) => ((x << b) | (x >>> (32 - b))) >>> 0;
+        const PB_URL = 'https://slunga.westus2.cloudapp.azure.com:8091';
+        const PAGE_ID = 'slunga_main';
+
+        async function trackGameClick(gameName) {
+            try {
+                await fetch(`${PB_URL}/api/collections/game_clicks/records`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        game_name: gameName,
+                        page_id: PAGE_ID // 'slunga'
+                    })
+                });
+            } catch (e) {
+                console.error("Tracking failed", e);
+            }
+        }
+
+        function roundFunction(right16, subKey) {
+            let x = (right16 ^ (subKey & 0xffff)) >>> 0;
+            x ^= x >>> 7;
+            x = Math.imul(x, 0x45d9f3b) >>> 0;
+            x ^= x >>> 11;
+            return x & 0xffff;
+        }
+
+        function encodeChunkFileName(gameIdHex4, chunkIdHex4, keyHex8) {
+            const key = keyHex8 ? parseInt(keyHex8, 16) >>> 0 : DEFAULT_KEY;
+            const gameId = parseInt(gameIdHex4, 16) & 0xffff;
+            const chunkId = parseInt(chunkIdHex4, 16) & 0xffff;
+            let left = gameId, right = chunkId;
+            for (let i = 0; i < 8; i++) {
+                const subKey = (rotl32(key, (i * 5) % 32) ^ Math.imul(0x9e3779b9, i + 1)) >>> 0;
+                const nextLeft = right;
+                const nextRight = (left ^ roundFunction(right, subKey)) & 0xffff;
+                left = nextLeft;
+                right = nextRight;
+            }
+            return `${toHex8(((left << 16) >>> 0) | right)}.dat`;
+        }
+
+        function bytesStartWith(buf, prefix) {
+            if (buf.length < prefix.length) return false;
+            for (let i = 0; i < prefix.length; i++) {
+                if (buf[i] !== prefix[i]) return false;
+            }
+            return true;
+        }
+
+        function hexToBytes(hex) {
+            if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error("Invalid data key hex");
+            const out = new Uint8Array(32);
+            for (let i = 0; i < 32; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+            return out;
+        }
+
+        async function deriveDefaultDataKeyBytes() {
+            const raw = new TextEncoder().encode(DEFAULT_DATA_KEY);
+            const hash = await crypto.subtle.digest("SHA-256", raw);
+            return new Uint8Array(hash);
+        }
+
+        async function getDataCryptoKey(game) {
+            const keyBytes = game.dataKeyHex ? hexToBytes(game.dataKeyHex) : await deriveDefaultDataKeyBytes();
+            return crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["decrypt"]);
+        }
+
+        async function decryptChunkIfNeeded(fileBytes, cryptoKey) {
+            if (!bytesStartWith(fileBytes, CHUNK_DATA_MAGIC)) {
+                return fileBytes;
+            }
+
+            const headerLength = CHUNK_DATA_MAGIC.length + CHUNK_DATA_IV_BYTES + CHUNK_DATA_TAG_BYTES;
+            if (fileBytes.length < headerLength) {
+                throw new Error("Encrypted chunk is truncated");
+            }
+
+            const ivStart = CHUNK_DATA_MAGIC.length;
+            const tagStart = ivStart + CHUNK_DATA_IV_BYTES;
+            const ctStart = tagStart + CHUNK_DATA_TAG_BYTES;
+
+            const iv = fileBytes.slice(ivStart, tagStart);
+            const tag = fileBytes.slice(tagStart, ctStart);
+            const ciphertext = fileBytes.slice(ctStart);
+
+            const combined = new Uint8Array(ciphertext.length + tag.length);
+            combined.set(ciphertext, 0);
+            combined.set(tag, ciphertext.length);
+
+            const plain = await crypto.subtle.decrypt(
+                { name: "AES-GCM", iv, tagLength: 128 },
+                cryptoKey,
+                combined
+            );
+
+            return new Uint8Array(plain);
+        }
+
+        async function fetchChunks(game, onUpdate) {
+            const progressMap = {};
+            const dataCryptoKey = await getDataCryptoKey(game);
+
+            const downloadChunk = async (i) => {
+                const fileName = encodeChunkFileName(game.gameIdHex4, toHex4(i), game.keyHex8);
+                const shortName = fileName.replace(".dat", "");
+                progressMap[i] = { name: shortName, loaded: 0, total: 0 };
+
+                const res = await fetch(`${game.url}/${fileName}`);
+                if (!res.ok) throw new Error(`Chunk ${shortName} failed`);
+
+                const total = parseInt(res.headers.get("content-length") || "0", 10);
+                progressMap[i].total = total;
+
+                const reader = res.body.getReader();
+                let received = 0;
+                const subChunks = [];
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    subChunks.push(value);
+                    received += value.length;
+                    progressMap[i].loaded = received;
+                    onUpdate(Object.values(progressMap));
+                }
+
+                const concatenated = new Uint8Array(received);
+                let offset = 0;
+                for (const sc of subChunks) {
+                    concatenated.set(sc, offset);
+                    offset += sc.length;
+                }
+
+                const plainBytes = await decryptChunkIfNeeded(concatenated, dataCryptoKey);
+                return new TextDecoder().decode(plainBytes);
+            };
+
+            const chunkPromises = [];
+            for (let i = 0; i < game.chunkCount; i++) chunkPromises.push(downloadChunk(i));
+            return (await Promise.all(chunkPromises)).join("");
+        }
+
+        const container = document.getElementById("grid");
+        const filterInput = document.getElementById("filterInput");
+
+        function getContrast(hex) {
+            if (!hex) return "#ffffff";
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            return ((r * 299) + (g * 587) + (b * 114)) / 1000 >= 128 ? "#000000" : "#ffffff";
+        }
+
+        filterInput.addEventListener("input", (e) => {
+            const term = e.target.value.toLowerCase();
+            document.querySelectorAll(".btn").forEach((btn) => {
+                btn.classList.toggle("hidden", !btn.textContent.toLowerCase().includes(term));
+            });
+        });
+
+        function setupGame(game) {
+            if (game.fontUrl && game.fontName) {
+                const isFile = /\.(ttf|otf|woff|woff2)$/i.test(game.fontUrl.split("?")[0]);
+                if (isFile) {
+                    const s = document.createElement("style");
+                    s.textContent = `@font-face { font-family: "${game.fontName}"; src: url("${game.fontUrl}"); font-display: swap; }`;
+                    document.head.appendChild(s);
+                } else {
+                    const l = document.createElement("link");
+                    l.rel = "stylesheet";
+                    l.href = game.fontUrl;
+                    document.head.appendChild(l);
+                }
+            }
+
+            const b = document.createElement("a");
+            b.className = "btn";
+            b.textContent = game.name;
+            b.style.backgroundColor = game.color || "#333";
+            b.style.setProperty("color", getContrast(game.color), "important");
+            b.style.fontFamily = game.fontName ? `"${game.fontName}", monospace` : "sans-serif";
+
+            b.onclick = async () => {
+                trackGameClick(game.name);
+                if (game.type === "direct") {
+                    window.open(game.url, "_blank", "noopener,noreferrer");
+                    return;
+                }
+
+                if (game.type === "proxy") {
+                    b.classList.add("loading");
+
+                    //const xor = game.url.split('').map((c, i) => i % 2 ? String.fromCharCode(c.charCodeAt(0) ^ 2) : c).join('');
+                    //const encodedId = btoa(xor);
+                    const encodedId = encodeURIComponent(game.url);
+                    const proxyUrl = `https://slunga.westus2.cloudapp.azure.com/go.html?id=${encodedId}`;
+
+                    const win = window.open("about:blank", "_blank");
+                    if (!win) {
+                        alert("Pop-up blocked!");
+                        b.classList.remove("loading");
+                        return;
+                    }
+
+                    win.document.write(`
+            <style>
+                body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background: #000; }
+                iframe { border: none; width: 100vw; height: 100vh; }
+            </style>
+            <iframe src="${proxyUrl}" allow="fullscreen; clipboard-read; clipboard-write; microphone; camera; focus-without-user-activation"></iframe>
+        `);
+                    win.document.close();
+
+                    b.classList.remove("loading");
+                    return;
+                }
+
+                b.classList.add("loading");
+                const win = window.open("about:blank", "_blank");
+                if (!win) {
+                    alert("Pop-up blocked!");
+                    b.classList.remove("loading");
+                    return;
+                }
+
+                const loadingHTML = `
+        <style>
+          body { background: #000; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; font-family: system-ui, sans-serif; }
+          #status { width: 320px; }
+          .chunk-row { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 4px; color: #888; }
+          .bar-bg { background: #1a1a1a; height: 6px; width: 100%; border-radius: 3px; overflow: hidden; margin-bottom: 12px; }
+          .bar-fill { background: #fff; height: 100%; width: 0%; transition: width 0.1s ease-out; }
+          h2 { margin-bottom: 25px; font-weight: 300; letter-spacing: 1.5px; text-transform: uppercase; font-size: 1.2rem; }
+          img { width: auto; max-height: 30%; margin-top: 20px;}
+        </style>
+        <body>
+          <h2>Preparing ${game.name}</h2>
+          <div id="status"></div>
+          <img src="https://cdn.jsdelivr.net/gh/Student-led-Educational-Opportunities/assets@master/landscape_ad.gif" alt="ad"></img>
+        </body>
+      `;
+
+                win.document.write(loadingHTML);
+                const statusEl = win.document.getElementById("status");
+
+                try {
+                    let htmlContent;
+
+                    if (game.chunkCount && game.chunkCount > 0) {
+                        htmlContent = await fetchChunks(game, (stats) => {
+                            statusEl.innerHTML = stats.map((s) => {
+                                const rawPct = s.total > 0 ? (s.loaded / s.total) * 100 : 0;
+                                const pct = Math.min(100, Math.round(rawPct));
+                                const mb = (s.loaded / (1024 * 1024)).toFixed(1);
+                                const displayLabel = s.total > 0 ? `${pct}%` : `${mb}MB`;
+                                return `
+                <div class="chunk-row"><span>Chunk ${s.name}</span><span>${displayLabel}</span></div>
+                <div class="bar-bg"><div class="bar-fill" style="width: ${s.total > 0 ? pct : 100}%"></div></div>
+              `;
+                            }).join("");
+                        });
+                    } else {
+                        const res = await fetch(`${game.url}?t=${Date.now()}`, { cache: "no-store" });
+                        if (!res.ok) throw new Error("Fetch failed.");
+                        htmlContent = await res.text();
+                    }
+
+                    win.document.open();
+                    win.document.write(htmlContent);
+                    win.document.close();
+                    const checkTab = setInterval(() => {
+                        if (win.closed) {
+                            clearInterval(checkTab);
+                            document.getElementById('sync-indicator').innerHTML = "Ready";
+                            document.getElementById('sync-overlay').style.opacity = "1";
+                            document.getElementById('sync-overlay').style.pointerEvents = "auto";
+                        } else {
+                            document.getElementById('sync-indicator').innerHTML = "Game Active";
+                            document.getElementById('sync-overlay').style.opacity = "0.5";
+                            document.getElementById('sync-overlay').style.pointerEvents = "none";
+                        }
+                    }, 1000);
+                } catch (e) {
+                    if (statusEl) statusEl.innerHTML = `<div style="color:#ff6b6b;font-size:0.9rem;">Load Error: ${e.message}</div>`;
+                } finally {
+                    b.classList.remove("loading");
+                }
+            };
+
+            container.appendChild(b);
+        }
+
+        // PocketBase Configuration
+        const SYNC_PB_URL = 'https://slunga.westus2.cloudapp.azure.com:8091';
+        const MAX_DB_SIZE = 5 * 1024 * 1024; // 5MB Limit
+
+        // Universal Database Exporter
+        async function exportSingleDatabase(dbName) {
+            return new Promise((resolve) => {
+                const req = indexedDB.open(dbName);
+                req.onsuccess = async (e) => {
+                    const db = e.target.result;
+                    const exportData = {};
+                    const storeNames = Array.from(db.objectStoreNames);
+                    if (storeNames.length === 0) { db.close(); return resolve({}); }
+                    const tx = db.transaction(storeNames, 'readonly');
+                    await Promise.all(storeNames.map(name => {
+                        return new Promise(res => {
+                            tx.objectStore(name).getAll().onsuccess = (ev) => {
+                                exportData[name] = ev.target.result;
+                                res();
+                            };
+                        });
+                    }));
+                    db.close();
+                    resolve(exportData);
+                };
+                req.onerror = () => resolve({});
+            });
+        }
+
+        // Global Backup Function
+        window.backupData = async function () {
+            const status = document.getElementById('sync-status');
+            status.innerText = "Scanning databases...";
+
+            const dbs = await indexedDB.databases();
+            let idbPayload = {};
+            let localPayload = { ...localStorage };
+
+            for (const dbInfo of dbs) {
+                const data = await exportSingleDatabase(dbInfo.name);
+                const size = new Blob([JSON.stringify(data)]).size;
+                if (size < MAX_DB_SIZE) idbPayload[dbInfo.name] = data;
+            }
+
+            try {
+                const res = await fetch(`${SYNC_PB_URL}/api/collections/cloud_saves/records`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ save_data: { localStorage: localPayload, indexedDB: idbPayload } })
+                });
+                const record = await res.json();
+                document.getElementById('sync-token').value = record.id;
+                status.innerText = "Backup complete!";
+                status.style.color = "#10b981";
+            } catch (e) { status.innerText = "Backup failed."; }
+        };
+
+        // Global Restore Function
+        window.restoreData = async function () {
+            const token = document.getElementById('sync-token').value;
+            const status = document.getElementById('sync-status');
+            const bar = document.getElementById('sync-progress-bar');
+            const container = document.getElementById('sync-progress-container');
+
+            if (!token) return alert("Enter a token first!");
+            status.innerText = "Downloading...";
+
+            try {
+                const res = await fetch(`${SYNC_PB_URL}/api/collections/cloud_saves/records/${token}`);
+                const record = await res.json();
+                const savedData = record.save_data;
+
+                // Restore LocalStorage
+                localStorage.clear();
+                Object.entries(savedData.localStorage || {}).forEach(([k, v]) => localStorage.setItem(k, v));
+
+                // Restore IndexedDB
+                if (savedData.indexedDB) {
+                    container.style.display = 'block';
+                    let total = 0, current = 0;
+                    Object.values(savedData.indexedDB).forEach(db => Object.values(db).forEach(s => total += s.length));
+
+                    for (const [dbName, stores] of Object.entries(savedData.indexedDB)) {
+                        await new Promise((resolve) => {
+                            const del = indexedDB.deleteDatabase(dbName);
+                            del.onsuccess = () => {
+                                const open = indexedDB.open(dbName, 1);
+                                open.onupgradeneeded = (e) => {
+                                    Object.keys(stores).forEach(s => e.target.result.createObjectStore(s, { autoIncrement: true }));
+                                };
+                                open.onsuccess = (e) => {
+                                    const db = e.target.result;
+                                    const tx = db.transaction(Object.keys(stores), 'readwrite');
+                                    tx.oncomplete = () => { db.close(); resolve(); };
+                                    Object.entries(stores).forEach(([sName, records]) => {
+                                        records.forEach(r => {
+                                            tx.objectStore(sName).put(r).onsuccess = () => {
+                                                current++;
+                                                bar.style.width = `${Math.floor((current / total) * 100)}%`;
+                                            };
+                                        });
+                                    });
+                                };
+                            };
+                        });
+                    }
+                }
+                status.innerText = "Success! Refreshing...";
+                setTimeout(() => location.reload(), 1000);
+            } catch (e) { status.innerText = "Restore failed."; }
+        };
+
+        async function loadManifest() {
+            const enabled = await configCatClient.getValueAsync("enabled", false);
+            if (!enabled) {
+                container.innerHTML = "<div class='error-msg'>Disabled by SLUNGA</div>";
+                return;
+            }
+            try {
+                const url = `https://raw.githubusercontent.com/Student-led-Educational-Opportunities/games/refs/heads/master/manifest.json?t=${Date.now()}`;
+                const response = await fetch(url, { cache: "no-store" });
+                const games = await response.json();
+                games.forEach(setupGame);
+            } catch (e) {
+                container.innerHTML = `<div class='error-msg'>System Offline</div>`;
+            }
+        }
+
+        loadManifest();
+    </script>
+</body>
+
+</html>
