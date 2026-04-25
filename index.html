@@ -187,10 +187,10 @@
             <span id="sync-indicator" style="color: #10b981;">Ready</span>
         </div>
         <input type="text" id="sync-token" class="sync-input" placeholder="Token (leave blank to create new)">
-        <button onclick="backupData()" class="sync-btn" style="background: #3b82f6;">↑ Backup to SlungaCloud</button>
-        <button onclick="restoreData()" class="sync-btn" style="background: #10b981;">↓ Load from SlungaCloud</button>
-        <button onclick="localDownload()" class="sync-btn" style="background: #7c3aed;">⬇ Export to File</button>
-        <button onclick="document.getElementById('local-import-input').click()" class="sync-btn" style="background: #b45309;">⬆ Import from File</button>
+        <button onclick="backupData()" class="sync-btn" style="background: #3b82f6;">⬆ Backup to SlungaCloud</button>
+        <button onclick="restoreData()" class="sync-btn" style="background: #10b981;">⬇ Load from SlungaCloud</button>
+        <button onclick="localDownload()" class="sync-btn" style="background: #7c3aed;">Export to File</button>
+        <button onclick="document.getElementById('local-import-input').click()" class="sync-btn" style="background: #b45309;">Import from File</button>
         <input type="file" id="local-import-input" accept=".json" style="display:none" onchange="localImport(this.files[0])">
         <div id="sync-status">Ready to sync</div>
         <div id="sync-progress-container" class="sync-progress-bg">
