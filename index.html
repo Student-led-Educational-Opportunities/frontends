@@ -509,6 +509,13 @@
         // PocketBase Configuration
         const SYNC_PB_URL = 'https://slunga.westus2.cloudapp.azure.com:8091';
         const MAX_DB_SIZE = 5 * 1024 * 1024; // 5MB Limit
+        
+window.addEventListener('load', () => {
+    const savedToken = localStorage.getItem('slunga_token');
+    if (savedToken) {
+        document.getElementById('sync-token').value = savedToken;
+    }
+});
 
         // Universal Database Exporter
         async function exportSingleDatabase(dbName) {
@@ -541,6 +548,7 @@
             const token = document.getElementById('sync-token').value.trim();
             status.innerText = "Scanning databases...";
             status.style.color = "#94a3b8";
+            localStorage.setItem('slunga_token', token);
 
             const dbs = await indexedDB.databases();
             let idbPayload = {};
