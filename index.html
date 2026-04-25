@@ -186,9 +186,12 @@
             <span>SlungaCloud</span>
             <span id="sync-indicator" style="color: #10b981;">Ready</span>
         </div>
-        <input type="text" id="sync-token" class="sync-input" placeholder="Enter Token to Restore">
+        <input type="text" id="sync-token" class="sync-input" placeholder="Token (leave blank to create new)">
         <button onclick="backupData()" class="sync-btn" style="background: #3b82f6;">↑ Backup to SlungaCloud</button>
         <button onclick="restoreData()" class="sync-btn" style="background: #10b981;">↓ Load from SlungaCloud</button>
+        <button onclick="localDownload()" class="sync-btn" style="background: #7c3aed;">⬇ Export to File</button>
+        <button onclick="document.getElementById('local-import-input').click()" class="sync-btn" style="background: #b45309;">⬆ Import from File</button>
+        <input type="file" id="local-import-input" accept=".json" style="display:none" onchange="localImport(this.files[0])">
         <div id="sync-status">Ready to sync</div>
         <div id="sync-progress-container" class="sync-progress-bg">
             <div id="sync-progress-bar" class="sync-progress-fill"></div>
@@ -532,10 +535,12 @@
             });
         }
 
-        // Global Backup Function
+        // Global Backup Function (supports overwriting an existing record when a token is present)
         window.backupData = async function () {
             const status = document.getElementById('sync-status');
+            const token = document.getElementById('sync-token').value.trim();
             status.innerText = "Scanning databases...";
+            status.style.color = "#94a3b8";
 
             const dbs = await indexedDB.databases();
             let idbPayload = {};
@@ -548,16 +553,107 @@
             }
 
             try {
-                const res = await fetch(`${SYNC_PB_URL}/api/collections/cloud_saves/records`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ save_data: { localStorage: localPayload, indexedDB: idbPayload } })
-                });
+                let res;
+                if (token) {
+                    res = await fetch(`${SYNC_PB_URL}/api/collections/cloud_saves/records/${token}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ save_data: { localStorage: localPayload, indexedDB: idbPayload } })
+                    });
+                } else {
+                    res = await fetch(`${SYNC_PB_URL}/api/collections/cloud_saves/records`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ save_data: { localStorage: localPayload, indexedDB: idbPayload } })
+                    });
+                }
                 const record = await res.json();
                 document.getElementById('sync-token').value = record.id;
-                status.innerText = "Backup complete!";
+                status.innerText = token ? "Save overwritten!" : "Backup complete!";
                 status.style.color = "#10b981";
-            } catch (e) { status.innerText = "Backup failed."; }
+            } catch (e) { status.innerText = "Backup failed."; status.style.color = "#ef4444"; }
+        };
+
+        // Local file export — no size limit applied
+        window.localDownload = async function () {
+            const status = document.getElementById('sync-status');
+            status.innerText = "Preparing download...";
+            status.style.color = "#94a3b8";
+
+            const dbs = await indexedDB.databases();
+            let idbPayload = {};
+            let localPayload = { ...localStorage };
+
+            for (const dbInfo of dbs) {
+                idbPayload[dbInfo.name] = await exportSingleDatabase(dbInfo.name);
+            }
+
+            const blob = new Blob([JSON.stringify({ localStorage: localPayload, indexedDB: idbPayload })], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'slunga_save.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            status.innerText = "Downloaded!";
+            status.style.color = "#10b981";
+        };
+
+        // Local file import — restore localStorage and IndexedDB from a previously exported file
+        window.localImport = async function (file) {
+            if (!file) return;
+            const status = document.getElementById('sync-status');
+            const bar = document.getElementById('sync-progress-bar');
+            const progressContainer = document.getElementById('sync-progress-container');
+            status.innerText = "Reading file...";
+            status.style.color = "#94a3b8";
+
+            try {
+                const savedData = JSON.parse(await file.text());
+
+                localStorage.clear();
+                Object.entries(savedData.localStorage || {}).forEach(([k, v]) => localStorage.setItem(k, v));
+
+                if (savedData.indexedDB) {
+                    progressContainer.style.display = 'block';
+                    let total = 0, current = 0;
+                    Object.values(savedData.indexedDB).forEach(db => Object.values(db).forEach(s => total += s.length));
+
+                    for (const [dbName, stores] of Object.entries(savedData.indexedDB)) {
+                        await new Promise((resolve) => {
+                            const del = indexedDB.deleteDatabase(dbName);
+                            const proceed = () => {
+                                const open = indexedDB.open(dbName, 1);
+                                open.onupgradeneeded = (e) => {
+                                    Object.keys(stores).forEach(s => e.target.result.createObjectStore(s, { autoIncrement: true }));
+                                };
+                                open.onsuccess = (e) => {
+                                    const db = e.target.result;
+                                    const tx = db.transaction(Object.keys(stores), 'readwrite');
+                                    tx.oncomplete = () => { db.close(); resolve(); };
+                                    Object.entries(stores).forEach(([sName, records]) => {
+                                        records.forEach(r => {
+                                            tx.objectStore(sName).put(r).onsuccess = () => {
+                                                current++;
+                                                bar.style.width = `${Math.floor((current / total) * 100)}%`;
+                                            };
+                                        });
+                                    });
+                                };
+                                open.onerror = () => resolve();
+                            };
+                            del.onsuccess = proceed;
+                            del.onerror = proceed;
+                        });
+                    }
+                }
+                status.innerText = "Imported! Refreshing...";
+                status.style.color = "#10b981";
+                setTimeout(() => location.reload(), 1000);
+            } catch (e) {
+                status.innerText = "Import failed.";
+                status.style.color = "#ef4444";
+            }
         };
 
         // Global Restore Function
