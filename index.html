@@ -215,28 +215,6 @@
         const toHex4 = (v) => (v & 0xffff).toString(16).padStart(4, "0");
         const toHex8 = (v) => (v >>> 0).toString(16).padStart(8, "0");
         const rotl32 = (x, b) => ((x << b) | (x >>> (32 - b))) >>> 0;
-       function setCookie(name, value, days) {
-  const d = new Date();
-  d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
-  let expires = "expires=" + d.toUTCString();
-  document.cookie = name + "=" + encodeURIComponent(value) + ";" + expires + ";path=/";
-}
-
-function getCookie(cname) {
-  let name = cname + "=";
-  let decodedCookie = decodeURIComponent(document.cookie);
-  let ca = decodedCookie.split(';');
-  for (let i = 0; i < ca.length; i++) {
-    let c = ca[i];
-    while (c.charAt(0) == ' ') {
-      c = c.substring(1);
-    }
-    if (c.indexOf(name) == 0) {
-      return c.substring(name.length, c.length);
-    }
-  }
-  return "";
-}
 const PB_URL = 'https://slunga.westus2.cloudapp.azure.com:8091';
 const PAGE_ID = 'slunga_main';
 async function getOrCreateTrackerId() {
@@ -250,7 +228,7 @@ async function getOrCreateTrackerId() {
   return id;
 }
 async function trackGameClick(gameName) {
-  let id = getOrCreateTrackerId();
+  let id = await getOrCreateTrackerId();
   try {
     await fetch(`${PB_URL}/api/collections/game_clicks/records`, {
       method: 'POST',
