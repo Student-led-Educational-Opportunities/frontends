@@ -215,23 +215,56 @@
         const toHex4 = (v) => (v & 0xffff).toString(16).padStart(4, "0");
         const toHex8 = (v) => (v >>> 0).toString(16).padStart(8, "0");
         const rotl32 = (x, b) => ((x << b) | (x >>> (32 - b))) >>> 0;
-        const PB_URL = 'https://slunga.westus2.cloudapp.azure.com:8091';
-        const PAGE_ID = 'slunga_main';
+       function setCookie(name, value, days) {
+  const d = new Date();
+  d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+  let expires = "expires=" + d.toUTCString();
+  document.cookie = name + "=" + encodeURIComponent(value) + ";" + expires + ";path=/";
+}
 
-        async function trackGameClick(gameName) {
-            try {
-                await fetch(`${PB_URL}/api/collections/game_clicks/records`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        game_name: gameName,
-                        page_id: PAGE_ID // 'slunga'
-                    })
-                });
-            } catch (e) {
-                console.error("Tracking failed", e);
-            }
-        }
+function getCookie(cname) {
+  let name = cname + "=";
+  let decodedCookie = decodeURIComponent(document.cookie);
+  let ca = decodedCookie.split(';');
+  for (let i = 0; i < ca.length; i++) {
+    let c = ca[i];
+    while (c.charAt(0) == ' ') {
+      c = c.substring(1);
+    }
+    if (c.indexOf(name) == 0) {
+      return c.substring(name.length, c.length);
+    }
+  }
+  return "";
+}
+const PB_URL = 'https://slunga.westus2.cloudapp.azure.com:8091';
+const PAGE_ID = 'slunga_main';
+
+async function trackGameClick(gameName) {
+  let cookie = getCookie("tracker");
+  if (!cookie) {
+    const bytes = new Uint8Array(8);
+    window.crypto.getRandomValues(bytes);
+    const tag = Array.from(bytes)
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+    cookie = tag;
+    setCookie("tracker", tag, 7);
+  }
+  try {
+    await fetch(`${PB_URL}/api/collections/game_clicks/records`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game_name: gameName,
+        page_id: PAGE_ID, // 'slunga'
+        track_id: cookie
+      })
+    });
+  } catch (e) {
+    console.error("Tracking failed", e);
+  }
+}
 
         function roundFunction(right16, subKey) {
             let x = (right16 ^ (subKey & 0xffff)) >>> 0;
