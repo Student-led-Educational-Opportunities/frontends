@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>BubbleEmu - GBA</title>
+  <style>
+    body, html { margin:0; padding:0; background:#220388; color:#fff; font-family:sans-serif; }
+    .controls {
+      position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+      z-index: 9999;
+      background:#2b02b5; border:6px solid #a634fe;
+      border-radius:12px; padding:12px; width:calc(100% - 20px); max-width:560px;
+      box-sizing:border-box; text-align:center;
+    }
+    #game-wrap { width:100vw; height:100vh; }
+    #game { width:100%; height:100%; }
+    #log {
+      margin-top:8px; height:160px; overflow:auto; text-align:left;
+      background:#221111; border:1px solid #ff4444; color:#ff9999;
+      padding:8px; font-family:monospace; font-size:11px; white-space:pre-wrap;
+    }
+    button { padding:10px 18px; font-weight:bold; background:#020089; color:#fff; border:0; border-radius:8px; cursor:pointer; }
+    button:disabled { opacity: 0.6; cursor:not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="controls">
+    <div style="font-weight:700;">BubbleEmu - EmulatorJS</div>
+    <div style="margin-top:8px;">
+      <input type="file" id="rom-input" />
+      <button id="launch-btn">Launch</button>
+    </div>
+    <div id="status" style="margin-top:6px;">Ready</div>
+    <div id="log">--- Ready ---</div>
+  </div>
+
+  <div id="game-wrap"><div id="game"></div></div>
+
+  <script>
+    const statusBox = document.getElementById("status");
+    const logBox = document.getElementById("log");
+    const launchBtn = document.getElementById("launch-btn");
+
+    function safeToString(x) {
+      if (typeof x === "string") return x;
+      try { return JSON.stringify(x); } catch { return String(x); }
+    }
+
+    function logger(msg, level = "INFO") {
+      const line = safeToString(msg);
+      logBox.textContent += `\n[${level}] ${line}`;
+      logBox.scrollTop = logBox.scrollHeight;
+      statusBox.textContent = line.slice(0, 140);
+    }
+
+    function formatArgs(args) {
+      return args.map(a => safeToString(a)).join(" ");
+    }
+
+    // ---- Capture ALL console messages to logger ----
+    (function interceptConsole() {
+      const methods = ["log", "info", "warn", "error", "debug"];
+      for (const m of methods) {
+        const orig = console[m] ? console[m].bind(console) : null;
+        console[m] = (...args) => {
+          logger(formatArgs(args), m.toUpperCase());
+          if (orig) orig(...args);
+        };
+      }
+    })();
+
+    // ---- Capture uncaught errors ----
+    window.addEventListener("error", (e) => {
+      // This handler also fires for resource errors; those are handled below with capture=true.
+      if (e && e.message) {
+        logger(`Uncaught: ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`, "ERROR");
+      }
+    });
+
+    // ---- Capture unhandled promise rejections ----
+    window.addEventListener("unhandledrejection", (e) => {
+      const r = e.reason;
+      const msg = (r && r.message) ? r.message : safeToString(r);
+      logger(`UnhandledRejection: ${msg}`, "ERROR");
+    });
+
+    // ---- Capture resource load failures (script/css/img) ----
+    window.addEventListener("error", (e) => {
+      const t = e.target;
+      if (!t) return;
+      const tag = (t.tagName || "").toUpperCase();
+      if (tag === "SCRIPT" || tag === "LINK" || tag === "IMG") {
+        logger(`Resource failed: <${tag.toLowerCase()}> ${t.src || t.href || ""}`, "ERROR");
+      }
+    }, true);
+
+    // ---- Capture fetch() failures (useful for wasm/core downloads) ----
+    (function interceptFetch() {
+      const origFetch = window.fetch ? window.fetch.bind(window) : null;
+      if (!origFetch) return;
+
+      window.fetch = async (...args) => {
+        try {
+          const res = await origFetch(...args);
+          if (!res.ok) {
+            logger(`fetch BAD ${res.status} ${res.url}`, "WARN");
+          }
+          return res;
+        } catch (err) {
+          logger(`fetch FAIL: ${(err && err.message) ? err.message : String(err)}`, "ERROR");
+          throw err;
+        }
+      };
+    })();
+
+    logger("Logger hooks installed.", "INFO");
+    (function envDiagnostics(){
+    console.log("Diagnostics:",
+      "crossOriginIsolated=" + window.crossOriginIsolated,
+      "SharedArrayBuffer=" + (typeof SharedArrayBuffer),
+      "COOP/COEP required for some WASM cores on some browsers"
+    );
+
+    if (typeof SharedArrayBuffer === "undefined" || !window.crossOriginIsolated) {
+      console.warn(
+        "This page is NOT cross-origin isolated. If the core uses threads/SAB, it may black-screen. " +
+        "Serve with COOP: same-origin and COEP: require-corp (or credentialless)."
+      );
+    }
+  })();
+
+    // ---- EmulatorJS globals (codehelper-style) ----
+    window.EJS_player = "#game";
+    window.EJS_core = "gba";
+    window.EJS_color = "#0064ff";
+
+    // IMPORTANT: match codehelper (no trailing slash)
+    window.EJS_pathtodata = "https://cdn.jsdelivr.net/npm/@emulatorjs/emulatorjs@latest/data";
+
+    // Optional BIOS (your URL)
+    window.EJS_biosUrl = "https://cdn.jsdelivr.net/gh/datadecay/ejsdat@master/gba_bios.bin";
+
+    const LOADER_URL = "https://cdn.jsdelivr.net/npm/@emulatorjs/emulatorjs@latest/data/loader.js";
+
+    function loadLoader() {
+      return new Promise((resolve, reject) => {
+        if (document.getElementById("ejs-loader")) return resolve();
+
+        const s = document.createElement("script");
+        s.id = "ejs-loader";
+        s.src = LOADER_URL;
+        s.async = true;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error("Failed to load loader.js: " + LOADER_URL));
+        document.body.appendChild(s);
+      });
+    }
+
+    launchBtn.onclick = async () => {
+      try {
+        const input = document.getElementById("rom-input");
+        const rom = input.files && input.files[0];
+        if (!rom) return logger("Pick a .gba ROM first.", "ERROR");
+
+        launchBtn.disabled = true;
+
+        document.getElementById("game").innerHTML = "";
+
+        window.EJS_gameUrl = URL.createObjectURL(rom);
+        console.log(`ROM selected: ${rom.name} (${rom.size} bytes)`);
+        console.log("Loading EmulatorJS loader:", LOADER_URL);
+
+        await loadLoader();
+
+        console.log("Loader loaded. If still black, watch for fetch BAD/FAIL lines above (wasm/core 404/CORS).");
+        setTimeout(() => window.dispatchEvent(new Event("resize")), 500);
+      } catch (e) {
+        console.error(e.message || String(e));
+        launchBtn.disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>
