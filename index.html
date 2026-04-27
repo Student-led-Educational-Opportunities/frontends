@@ -239,18 +239,18 @@ function getCookie(cname) {
 }
 const PB_URL = 'https://slunga.westus2.cloudapp.azure.com:8091';
 const PAGE_ID = 'slunga_main';
-
-async function trackGameClick(gameName) {
-  let cookie = getCookie("tracker");
-  if (!cookie) {
+async function getOrCreateTrackerId() {
+  let id = localStorage.getItem("tracker");
+  if (!id) {
     const bytes = new Uint8Array(8);
-    window.crypto.getRandomValues(bytes);
-    const tag = Array.from(bytes)
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-    cookie = tag;
-    setCookie("tracker", tag, 7);
+    crypto.getRandomValues(bytes);
+    id = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+    localStorage.setItem("tracker", id);
   }
+  return id;
+}
+async function trackGameClick(gameName) {
+  let id = getOrCreateTrackerId();
   try {
     await fetch(`${PB_URL}/api/collections/game_clicks/records`, {
       method: 'POST',
@@ -258,7 +258,7 @@ async function trackGameClick(gameName) {
       body: JSON.stringify({
         game_name: gameName,
         page_id: PAGE_ID, // 'slunga'
-        track_id: cookie
+        track_id: id
       })
     });
   } catch (e) {
