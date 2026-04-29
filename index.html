@@ -198,7 +198,19 @@
         </div>
         <div style="color: #f00">Inactive saves are cleared after 60 days.</div>
     </div>
+    <dialog id="fake-dialog">
+  <p>This is an unofficial site. <a href="https://sites.google.com/students.wcpss.net/slunga/home">Official Site</a></p>
+  <button commandfor="fake-dialog" command="close">Close</button>
+</dialog>
     <script type="module">
+        const urlParams = new URLSearchParams(window.location.search);
+        const authn = urlParams.get('authn');
+        const dialog = document.querySelector("dialog");
+        if (authn != "slungaofficial") {
+            dialog.showModal();
+        }
+            
+        
         const logger = configcat.createConsoleLogger(configcat.LogLevel.Info); // Set the log level to INFO to track how your feature flags were evaluated. When moving to production, you can remove this line to avoid too detailed logging.
 
         const configCatClient = configcat.getClient("configcat-sdk-1/4ZveCKjyH0mHYVd1M0wDSQ/wdIMuHzTEEGrsBBY3oyNcQ", // <-- This is the actual SDK Key for your Main environment
