@@ -208,6 +208,10 @@
         const dialog = document.querySelector("dialog");
         if (authn != "slungaofficial") {
             dialog.showModal();
+            document.getElementById('sync-overlay').innerHTML = `<div style="font-weight: bold; margin-bottom: 10px; display: flex; justify-content: space-between;">
+            <span>SlungaCloud Game Saves</span>
+            <span style="color: #ff0000;">Disabled on third-party sites</span>
+        </div>`
         }
             
         
