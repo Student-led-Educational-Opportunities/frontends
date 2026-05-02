@@ -816,7 +816,8 @@ import PocketBase from "https://esm.sh/pocketbase@0.22.0";
       // Will throw if not found
       await pb.collection("tokens").getFirstListItem(`token="${tokenParam}"`);
       return true;
-    } catch {
+    } catch (e) {
+        alert(e);
       return false;
     }
   }
