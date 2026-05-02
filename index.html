@@ -207,36 +207,6 @@
     const urlParams = new URLSearchParams(window.location.search);
     const authn = urlParams.get('authn');
     const dialog = document.querySelector("dialog");
-    const officialSite = "sites.google.com/students.wcpss.net/slunga";
-    
-    let isAuthorized = true;
-
-    // Check 1: The Key
-    if (authn !== "slungaofficial") isAuthorized = false;
-
-    // Check 2: The Referrer
-    if (!document.referrer || !document.referrer.includes(officialSite)) {
-        isAuthorized = false;
-    }
-
-    try {
-        if (!window.top.location.href.includes(officialSite)) {
-            isAuthorized = false;
-        }
-    } catch (e) {
-        isAuthorized = false;
-    }
-
-    if (!isAuthorized) {
-        dialog.showModal();
-        document.getElementById('sync-overlay').innerHTML = `
-            <div style="font-weight: bold; padding: 20px; text-align: center;">
-                <span style="color: #ff0000; display: block; font-size: 1.5em;">${document.referrer || "UNKNOWN" } is stealing the site.</span>
-                <a href="https://${officialSite}" target="_blank" style="color: blue;">Visit Official Site</a>
-            </div>`;
-        window.stop(); 
-    }
-})();
             
         
         const logger = configcat.createConsoleLogger(configcat.LogLevel.Info); // Set the log level to INFO to track how your feature flags were evaluated. When moving to production, you can remove this line to avoid too detailed logging.
