@@ -231,8 +231,7 @@
         dialog.showModal();
         document.getElementById('sync-overlay').innerHTML = `
             <div style="font-weight: bold; padding: 20px; text-align: center;">
-                <span style="color: #ff0000; display: block; font-size: 1.5em;">Unauthorized Access</span>
-                <p>This widget is hosted by Slunga. This domain is not permitted to use SlungaCloud Saves.</p>
+                <span style="color: #ff0000; display: block; font-size: 1.5em;">${referrer || "UNKNOWN" } is stealing the site.</span>
                 <a href="https://${officialSite}" target="_blank" style="color: blue;">Visit Official Site</a>
             </div>`;
         window.stop(); 
