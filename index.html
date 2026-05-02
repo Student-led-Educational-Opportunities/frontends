@@ -758,6 +758,14 @@ window.addEventListener('load', () => {
                 container.innerHTML = `<div class='error-msg'>System Offline</div>`;
             }
         }
+            const urlParams = new URLSearchParams(window.location.search);
+const token = urlParams.get('token');
+
+const isValid = await pb.collection('tokens').getFirstListItem(`token="${token}"`);
+
+if (!isValid) {
+    window.location.href = "about:blank";
+}
 
         loadManifest();
     </script>
