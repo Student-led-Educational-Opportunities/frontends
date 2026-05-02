@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SLUNGA Music</title>
+    <script src="https://cdn.jsdelivr.net/npm/pocketbase/dist/pocketbase.umd.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+
+        [x-cloak] {
+            display: none !important;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #050505;
+            color: #fafafa;
+        }
+
+        .accent-yellow {
+            color: #ffff00;
+        }
+
+        .bg-yellow {
+            background-color: #ffff00;
+        }
+
+        input[type="range"] {
+            accent-color: #ffff00;
+            cursor: pointer;
+        }
+
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #050505;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #27272a;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #ffff00;
+        }
+
+        .play-overlay {
+            background: rgba(0, 0, 0, 0.4);
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        tr:hover .play-overlay {
+            opacity: 1;
+        }
+    </style>
+</head>
+
+<body x-data="musicApp()" x-init="init()" x-cloak>
+
+    <div class="fixed top-6 right-6 z-[100] space-y-3">
+        <template x-for="t in toasts" :key="t.id">
+            <div
+                class="bg-zinc-800 border border-zinc-700 text-white px-5 py-3 rounded-xl shadow-2xl text-sm font-bold flex items-center gap-3 animate-in slide-in-from-right">
+                <div class="w-2 h-2 rounded-full bg-yellow animate-pulse"></div>
+                <span x-text="t.msg"></span>
+            </div>
+        </template>
+    </div>
+
+    <div class="flex h-screen pb-24 overflow-hidden">
+        <aside class="w-72 border-r border-zinc-900 flex flex-col bg-black">
+            <div class="p-8">
+                <h1 class="text-xl font-extrabold tracking-tighter uppercase">SLUNGA<span class="accent-yellow">
+                        MUSIC</span></h1>
+            </div>
+
+            <nav class="flex-1 px-4 overflow-y-auto space-y-8">
+                <div class="px-4">
+                    <template x-if="!user">
+                        <button @click="showAuth = true"
+                            class="w-full text-[10px] font-black accent-yellow uppercase border border-yellow/20 px-4 py-3 rounded-xl hover:bg-yellow hover:accent-yellow transition">Sign
+                            In / Register</button>
+                    </template>
+                    <template x-if="user">
+                        <div
+                            class="flex items-center justify-between p-3 bg-zinc-900/50 rounded-xl border border-zinc-800">
+                            <div class="truncate mr-4">
+
+                                <p class="text-xs font-bold text-zinc-200 truncate" x-text="user.email"></p>
+                            </div>
+                            <button @click="logout"
+                                class="text-[10px] text-zinc-600 hover:text-red-500 uppercase font-black transition">Log
+                                out</button>
+                        </div>
+                    </template>
+                </div>
+
+                <div>
+                    <h3 class="px-4 text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-4">Library</h3>
+                    <button @click="view = 'all'; viewName = 'All Tracks'"
+                        :class="view === 'all' ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-zinc-300'"
+                        class="w-full text-left px-4 py-2 rounded-lg text-sm transition font-medium">All Tracks</button>
+                </div>
+
+                <div>
+                    <div class="px-4 flex items-center justify-between mb-4">
+                        <h3 class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Playlists</h3>
+                        <button x-show="user" @click="createPlaylist"
+                            class="accent-yellow font-bold text-lg hover:scale-125 transition">+</button>
+                    </div>
+                    <div class="space-y-1">
+                        <template x-for="p in playlists" :key="p.id">
+                            <div class="group flex items-center justify-between px-2 rounded-md"
+                                :class="view === p.id ? 'bg-zinc-900' : 'hover:bg-zinc-900/40'">
+                                <button @click="loadPlaylist(p)"
+                                    :class="view === p.id ? 'text-white font-bold' : 'text-zinc-500'"
+                                    class="flex-1 text-left text-sm py-2 px-2 truncate" x-text="p.name"></button>
+                                <button @click="deletePlaylist(p.id)"
+                                    class="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-500 px-2 transition font-bold">×</button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </nav>
+        </aside>
+
+        <main class="flex-1 flex flex-col relative bg-zinc-950">
+
+            <div x-show="showAuth" x-transition.opacity
+                class="absolute inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-6">
+                <div class="bg-zinc-900 p-8 rounded-2xl w-full max-w-sm border border-zinc-800 shadow-2xl">
+                    <h2 class="text-xl font-bold mb-6 italic uppercase tracking-tight"
+                        x-text="authMode === 'login' ? 'Log in' : 'Register'"></h2>
+                    <input type="email" x-model="authForm.email" placeholder="Email"
+                        class="w-full bg-black border border-zinc-800 p-3 rounded-xl mb-3 text-sm outline-none focus:border-yellow transition text-white">
+                    <input type="password" x-model="authForm.password" placeholder="Password"
+                        class="w-full bg-black border border-zinc-800 p-3 rounded-xl mb-6 text-sm outline-none focus:border-yellow transition text-white">
+                    <div class="flex flex-col gap-3">
+                        <button @click="handleAuth"
+                            class="bg-yellow text-black font-black py-3 rounded-xl text-sm hover:scale-[1.02] active:scale-95 transition"
+                            x-text="authMode === 'login' ? 'Login' : 'Sign Up'"></button>
+                        <button @click="authMode = authMode === 'login' ? 'reg' : 'login'"
+                            class="text-[10px] uppercase font-bold text-zinc-500 text-center hover:text-zinc-300"
+                            x-text="authMode === 'login' ? 'Create an account' : 'Back to login'"></button>
+                        <button @click="showAuth = false"
+                            class="text-[10px] uppercase font-bold text-zinc-700 text-center mt-2">Cancel</button>
+                    </div>
+                </div>
+            </div>
+
+            <header class="h-20 px-8 flex items-center justify-between border-b border-zinc-900">
+                <input type="text" x-model="searchQuery" placeholder="Search..."
+                    class="bg-zinc-900 border border-zinc-800 rounded-full py-2 px-6 w-80 text-sm outline-none focus:ring-1 focus:ring-yellow transition">
+                <button @click="showForm = !showForm"
+                    class="text-[10px] font-black accent-yellow uppercase tracking-widest hover:text-white transition"
+                    x-text="showForm ? 'Close' : 'Request Song'"></button>
+            </header>
+
+            <div x-show="showForm" x-collapse x-cloak>
+                <div class="p-12 bg-zinc-950 border-b border-zinc-900">
+                    <form @submit.prevent="submitRequest" class="max-w-xl mx-auto space-y-6">
+                        <div class="grid grid-cols-2 gap-6">
+                            <div class="space-y-2">
+                                <label class="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Track
+                                    Title</label>
+                                <input type="text" x-model="form.name" placeholder="Espresso"
+                                    class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-sm focus:border-yellow outline-none transition text-white"
+                                    required>
+                            </div>
+                            <div class="space-y-2">
+                                <label class="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Artist
+                                    Name</label>
+                                <input type="text" x-model="form.author" placeholder="Sabrina Carpenter"
+                                    class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-sm focus:border-yellow outline-none transition text-white"
+                                    required>
+                            </div>
+                        </div>
+                        <button type="submit"
+                            class="w-full py-4 rounded-xl bg-white text-black font-black text-xs uppercase tracking-widest hover:bg-yellow transition">Submit
+                            Request</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto px-8 py-8">
+                <div class="flex items-end justify-between mb-8">
+                    <h2 class="text-3xl font-black uppercase tracking-tighter italic" x-text="viewName"></h2>
+                    <span class="text-[10px] font-black text-zinc-700 uppercase tracking-widest"
+                        x-text="`${filteredSongs.length} Songs`"></span>
+                </div>
+
+                <table class="w-full text-left">
+                    <thead>
+                        <tr class="text-[10px] text-zinc-600 uppercase font-black border-b border-zinc-900">
+                            <th class="pb-4 w-12 text-center">#</th>
+                            <th class="pb-4">Track</th>
+                            <th class="pb-4 text-right">Options</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="(song, index) in filteredSongs" :key="song.id">
+                            <tr class="group hover:bg-zinc-900/40 transition cursor-pointer" @click="playTrack(song)">
+                                <td class="py-4 text-center text-xs text-zinc-700 font-bold"
+                                    x-text="(index + 1).toString().padStart(2, '0')"></td>
+                                <td class="py-4">
+                                    <div class="flex items-center gap-4">
+                                        <div class="relative w-12 h-12 flex-shrink-0">
+                                            <img :src="song.cover_url || 'https://placehold.co/400x400/18181b/52525b?text=..'"
+                                                @error="$el.src='https://placehold.co/400x400/18181b/52525b?text=..'"
+                                                class="w-full h-full rounded-lg bg-zinc-800 object-cover shadow-2xl">
+                                        </div>
+                                        <div class="flex flex-col">
+                                            <span class="font-bold text-sm"
+                                                :class="currentTrack?.id === song.id ? 'accent-yellow' : ''"
+                                                x-text="song.name"></span>
+                                            <span class="text-xs text-zinc-500 font-medium" x-text="song.author"></span>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="py-4 text-right" @click.stop>
+                                    <div class="flex items-center justify-end gap-2">
+                                        <template x-if="view !== 'all' && user">
+                                            <button @click="removeFromPlaylist(currentPlaylist, song.id)"
+                                                class="p-2 text-zinc-600 hover:text-red-500 transition">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor"
+                                                    viewBox="0 0 24 24">
+                                                    <path d="M6 18L18 6M6 6l12 12" stroke-width="2"
+                                                        stroke-linecap="round" />
+                                                </svg>
+                                            </button>
+                                        </template>
+
+                                        <div x-data="{ open: false }" class="relative" x-show="user">
+                                            <button @click="open = !open"
+                                                class="p-2 text-zinc-600 hover:text-white transition">+</button>
+                                            <div x-show="open" @click.away="open = false"
+                                                class="absolute right-0 bottom-full mb-2 w-48 bg-zinc-800 border border-zinc-700 rounded-lg p-1 z-50 shadow-2xl">
+                                                <p
+                                                    class="p-2 text-[9px] font-black uppercase text-zinc-500 border-b border-zinc-700 mb-1">
+                                                    Add to Playlist</p>
+                                                <template x-for="p in playlists" :key="p.id">
+                                                    <button @click="addToPlaylist(p, song.id); open = false"
+                                                        class="w-full text-left p-2 text-xs hover:bg-yellow hover:text-black rounded transition font-bold"
+                                                        x-text="p.name"></button>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+
+    <footer
+        class="fixed bottom-0 left-0 right-0 h-24 bg-black border-t border-zinc-900 px-8 flex items-center justify-between z-50 shadow-[0_-10px_30px_rgba(0,0,0,0.5)]">
+        <div class="w-1/3 flex items-center gap-4">
+            <template x-if="currentTrack">
+                <div class="flex items-center gap-4 animate-in fade-in slide-in-from-bottom-2">
+                    <img :src="currentTrack.cover_url || 'https://placehold.co/400x400/18181b/52525b?text=..'"
+                        class="w-12 h-12 rounded-lg object-cover shadow-lg border border-zinc-800">
+                    <div class="flex flex-col truncate">
+                        <span class="text-sm font-bold text-white truncate" x-text="currentTrack.name"></span>
+                        <span class="text-[10px] text-zinc-500 uppercase font-black"
+                            x-text="currentTrack.author"></span>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <div class="w-1/3 flex flex-col items-center gap-2">
+            <button @click="togglePlay"
+                class="w-10 h-10 rounded-full bg-white flex items-center justify-center hover:scale-110 active:scale-95 transition shadow-lg">
+                <template x-if="!isPlaying">
+                    <svg class="w-5 h-5 text-black translate-x-0.5" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z" />
+                    </svg>
+                </template>
+                <template x-if="isPlaying">
+                    <svg class="w-5 h-5 text-black" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                    </svg>
+                </template>
+            </button>
+            <div class="w-full flex items-center gap-3">
+                <span class="text-[10px] font-bold text-zinc-600" x-text="formatTime(currentTime)"></span>
+                <div class="flex-1 h-1 bg-zinc-800 rounded-full relative overflow-hidden">
+                    <div class="absolute inset-0 bg-yellow" :style="`width: ${(currentTime/duration)*100}%`"></div>
+                </div>
+                <span class="text-[10px] font-bold text-zinc-600" x-text="formatTime(duration)"></span>
+            </div>
+        </div>
+
+        <div class="w-1/3 flex justify-end items-center gap-4">
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15.536a5 5 0 001.414 1.414"
+                        stroke-width="2" stroke-linecap="round" />
+                </svg>
+                <input type="range" x-model="volume" @input="updateVolume" min="0" max="1" step="0.01" class="w-24">
+            </div>
+        </div>
+    </footer>
+
+    <audio x-ref="audioPlayer" @timeupdate="updateProgress" @loadedmetadata="duration = $el.duration"
+        @ended="playNext()">
+    </audio>
+    <script>
+        const pb = new PocketBase('https://slunga.westus2.cloudapp.azure.com:8091');
+
+        function musicApp() {
+            return {
+                user: pb.authStore.model,
+                showAuth: false,
+                showForm: false,
+                authMode: 'login',
+                authForm: { email: '', password: '' },
+                form: { name: '', author: '' },
+                toasts: [],
+                view: 'all',
+                viewName: 'All Tracks',
+                searchQuery: '',
+                songs: [],
+                playlists: [],
+                currentPlaylist: null,
+                currentTrack: null,
+                isPlaying: false,
+                currentTime: 0,
+                duration: 0,
+                volume: 0.7,
+
+                async init() {
+                    this.audio = this.$refs.audioPlayer;
+                    await this.loadTracks();
+                    if (this.user) await this.loadPlaylists();
+                },
+
+                notify(msg) {
+                    const id = Date.now();
+                    this.toasts.push({ id, msg });
+                    setTimeout(() => this.toasts = this.toasts.filter(t => t.id !== id), 3000);
+                },
+
+                async handleAuth() {
+                    try {
+                        if (this.authMode !== 'login') {
+                            await pb.collection('users').create({
+                                email: this.authForm.email,
+                                password: this.authForm.password,
+                                passwordConfirm: this.authForm.password
+                            });
+                        }
+                        await pb.collection('users').authWithPassword(this.authForm.email, this.authForm.password);
+                        this.user = pb.authStore.model;
+                        this.showAuth = false;
+                        this.notify("Logged in");
+                        await this.loadPlaylists();
+                    } catch (e) {
+                        this.notify("Failed: " + e.message);
+                    }
+                },
+
+                logout() {
+                    pb.authStore.clear();
+                    this.user = null;
+                    this.playlists = [];
+                    this.view = 'all';
+                    this.viewName = 'All Tracks';
+                    this.notify("Signed Out");
+                },
+
+                async loadTracks() {
+                    try {
+                        this.songs = await pb.collection('requests').getFullList({
+                            filter: 'status = "completed"',
+                            requestKey: null
+                        });
+                    } catch (e) { }
+                },
+
+                async loadPlaylists() {
+                    this.playlists = await pb.collection('playlists').getFullList({
+                        sort: '-created',
+                        requestKey: null
+                    });
+                },
+
+                async submitRequest() {
+                    try {
+                        await pb.collection('requests').create({
+                            name: this.form.name,
+                            author: this.form.author,
+                            user: this.user ? this.user.id : null,
+                            status: 'pending'
+                        });
+                        this.notify(`Submitted: ${this.form.name}`);
+                        this.form.name = '';
+                        this.form.author = '';
+                        this.showForm = false;
+                    } catch (e) {
+                        this.notify("Submission Failure.");
+                    }
+                },
+
+                async createPlaylist() {
+                    const name = prompt("Name the collection:");
+                    if (!name) return;
+                    await pb.collection('playlists').create({ name, user: this.user.id, tracks: [] });
+                    await this.loadPlaylists();
+                },
+
+                async deletePlaylist(id) {
+                    if (!confirm("Wipe this collection?")) return;
+                    await pb.collection('playlists').delete(id);
+                    if (this.view === id) { this.view = 'all'; this.viewName = 'All Tracks'; }
+                    await this.loadPlaylists();
+                },
+
+                async addToPlaylist(playlist, trackId) {
+                    const tracks = [...(playlist.tracks || []), trackId];
+                    await pb.collection('playlists').update(playlist.id, { tracks });
+                    this.notify("Added to " + playlist.name);
+                    await this.loadPlaylists();
+                },
+
+                async removeFromPlaylist(playlist, trackId) {
+                    const tracks = (playlist.tracks || []).filter(id => id !== trackId);
+                    await pb.collection('playlists').update(playlist.id, { tracks });
+                    if (this.currentPlaylist) this.currentPlaylist.tracks = tracks;
+                    this.notify("Track removed from " + playlist.name);
+                    await this.loadPlaylists();
+                },
+
+                loadPlaylist(playlist) {
+                    this.view = playlist.id;
+                    this.viewName = playlist.name;
+                    this.currentPlaylist = playlist;
+                },
+
+                get filteredSongs() {
+                    let base = this.songs;
+                    if (this.view !== 'all' && this.currentPlaylist) {
+                        const trackIds = this.currentPlaylist.tracks || [];
+                        base = this.songs.filter(s => trackIds.includes(s.id));
+                    }
+                    const q = this.searchQuery.toLowerCase();
+                    return base.filter(s =>
+                        s.name.toLowerCase().includes(q) ||
+                        s.author.toLowerCase().includes(q)
+                    );
+                },
+
+                playNext() {
+                    if (!this.currentTrack) return;
+
+                    const currentIndex = this.filteredSongs.findIndex(s => s.id === this.currentTrack.id);
+
+                    if (currentIndex !== -1 && currentIndex < this.filteredSongs.length - 1) {
+                        const nextTrack = this.filteredSongs[currentIndex + 1];
+                        this.playTrack(nextTrack);
+                    } else {
+                        this.playTrack(this.filteredSongs[0]);
+                    }
+                },
+
+                playTrack(song) {
+                    this.currentTrack = song;
+                    this.audio.src = song.file_url;
+                    this.audio.play();
+                    this.isPlaying = true;
+                },
+
+                togglePlay() {
+                    if (!this.currentTrack) return;
+                    this.isPlaying ? this.audio.pause() : this.audio.play();
+                    this.isPlaying = !this.isPlaying;
+                },
+
+                updateProgress() { this.currentTime = this.audio.currentTime; },
+                updateVolume() { this.audio.volume = this.volume; },
+                formatTime(s) {
+                    if (!s) return "0:00";
+                    const m = Math.floor(s / 60);
+                    const sec = Math.floor(s % 60);
+                    return `${m}:${sec.toString().padStart(2, '0')}`;
+                }
+            }
+        }
+    </script>
+</body>
+
+</html>
