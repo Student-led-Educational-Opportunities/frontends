@@ -204,6 +204,8 @@
 </dialog>
     <script type="module">
         (function() {
+        import PocketBase from "https://esm.sh/pocketbase@0.22.0";
+
     const urlParams = new URLSearchParams(window.location.search);
     const authn = urlParams.get('authn');
     const dialog = document.querySelector("dialog");
@@ -225,8 +227,10 @@
         const toHex4 = (v) => (v & 0xffff).toString(16).padStart(4, "0");
         const toHex8 = (v) => (v >>> 0).toString(16).padStart(8, "0");
         const rotl32 = (x, b) => ((x << b) | (x >>> (32 - b))) >>> 0;
-const PB_URL = 'https://slunga.westus2.cloudapp.azure.com:8091';
 const PAGE_ID = 'slunga_main';
+const PB_URL = "https://slunga.westus2.cloudapp.azure.com:8091";
+const pb = new PocketBase(PB_URL);
+pb.autoCancellation(false); // optional but often helpful in single-page scripts
 async function getOrCreateTrackerId() {
   let id = localStorage.getItem("tracker");
   if (!id) {
@@ -240,14 +244,11 @@ async function getOrCreateTrackerId() {
 async function trackGameClick(gameName) {
   let id = await getOrCreateTrackerId();
   try {
-    await fetch(`${PB_URL}/api/collections/game_clicks/records`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        game_name: gameName,
-        page_id: PAGE_ID, // 'slunga'
-        track_id: id
-      })
+      try {
+    await pb.collection("game_clicks").create({
+      game_name: gameName,
+      page_id: PAGE_ID,
+      track_id: id,
     });
   } catch (e) {
     console.error("Tracking failed", e);
@@ -586,22 +587,19 @@ window.addEventListener('load', () => {
 
             try {
                 let res;
-                if (token) {
-                    res = await fetch(`${SYNC_PB_URL}/api/collections/cloud_saves/records/${token}`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ save_data: { localStorage: localPayload, indexedDB: idbPayload } })
-                    });
-                } else {
-                    res = await fetch(`${SYNC_PB_URL}/api/collections/cloud_saves/records`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ save_data: { localStorage: localPayload, indexedDB: idbPayload } })
-                    });
-                }
+    if (token) {
+      record = await pb.collection("cloud_saves").update(token, {
+        save_data: { localStorage: localPayload, indexedDB: idbPayload },
+      });
+      status.innerText = "Save overwritten!";
+    } else {
+      record = await pb.collection("cloud_saves").create({
+        save_data: { localStorage: localPayload, indexedDB: idbPayload },
+      });
+      status.innerText = "Backup complete!";
+    }
                 const record = await res.json();
                 document.getElementById('sync-token').value = record.id;
-                status.innerText = token ? "Save overwritten!" : "Backup complete!";
                 status.style.color = "#10b981";
             } catch (e) { status.innerText = "Backup failed."; status.style.color = "#ef4444"; }
         };
@@ -699,9 +697,8 @@ window.addEventListener('load', () => {
             status.innerText = "Downloading...";
 
             try {
-                const res = await fetch(`${SYNC_PB_URL}/api/collections/cloud_saves/records/${token}`);
-                const record = await res.json();
-                const savedData = record.save_data;
+    const record = await pb.collection("cloud_saves").getOne(token);
+    const savedData = record.save_data;
 
                 // Restore LocalStorage
                 localStorage.clear();
