@@ -1,7 +1,7 @@
 {
   "globalHeaders": {
     "Cross-Origin-Opener-Policy": "same-origin",
-    "Cross-Origin-Embedder-Policy": "require-corp",
+    "Cross-Origin-Embedder-Policy": "unsafe-none", 
     "Cross-Origin-Resource-Policy": "cross-origin",
     "Permissions-Policy": "interest-cohort=()"
   }
