@@ -203,268 +203,269 @@
   <button commandfor="fake-dialog" command="close">Close</button>
 </dialog>
     <script type="module">
-        (function() {
-        import PocketBase from "https://esm.sh/pocketbase@0.22.0";
+import PocketBase from "https://esm.sh/pocketbase@0.22.0";
 
-    const urlParams = new URLSearchParams(window.location.search);
-    const authn = urlParams.get('authn');
-    const dialog = document.querySelector("dialog");
-            
-        
-        const logger = configcat.createConsoleLogger(configcat.LogLevel.Info); // Set the log level to INFO to track how your feature flags were evaluated. When moving to production, you can remove this line to avoid too detailed logging.
+(() => {
+  // --- URL params / auth ---
+  const urlParams = new URLSearchParams(window.location.search);
+  const authn = urlParams.get("authn"); // currently unused, kept for compatibility
+  const tokenParam = urlParams.get("token");
 
-        const configCatClient = configcat.getClient("configcat-sdk-1/4ZveCKjyH0mHYVd1M0wDSQ/wdIMuHzTEEGrsBBY3oyNcQ", // <-- This is the actual SDK Key for your Main environment
-            configcat.PollingMode.AutoPoll,
-            {
-                logger: logger
-            });
-        const DEFAULT_KEY = 0xa5c3f17d;
-        const DEFAULT_DATA_KEY = "games-chunk-data-v1";
-        const CHUNK_DATA_MAGIC = new TextEncoder().encode("GDCHUNK1");
-        const CHUNK_DATA_IV_BYTES = 12;
-        const CHUNK_DATA_TAG_BYTES = 16;
-
-        const toHex4 = (v) => (v & 0xffff).toString(16).padStart(4, "0");
-        const toHex8 = (v) => (v >>> 0).toString(16).padStart(8, "0");
-        const rotl32 = (x, b) => ((x << b) | (x >>> (32 - b))) >>> 0;
-const PAGE_ID = 'slunga_main';
-const PB_URL = "https://slunga.westus2.cloudapp.azure.com:8091";
-const pb = new PocketBase(PB_URL);
-pb.autoCancellation(false); // optional but often helpful in single-page scripts
-async function getOrCreateTrackerId() {
-  let id = localStorage.getItem("tracker");
-  if (!id) {
-    const bytes = new Uint8Array(8);
-    crypto.getRandomValues(bytes);
-    id = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
-    localStorage.setItem("tracker", id);
+  // --- Optional dialog (kept, but wired up safely) ---
+  const dialog = document.querySelector("#fake-dialog");
+  if (dialog) {
+    // If browser doesn't support commandfor/command, ensure close works.
+    const closeBtn = dialog.querySelector('button[command="close"]');
+    if (closeBtn) closeBtn.addEventListener("click", () => dialog.close());
+    // Show it once per browser (optional behavior; remove if undesired)
+    // if (!localStorage.getItem("seen_fake_dialog")) { dialog.showModal(); localStorage.setItem("seen_fake_dialog", "1"); }
   }
-  return id;
-}
-async function trackGameClick(gameName) {
-  let id = await getOrCreateTrackerId();
-  try {
-      try {
-    await pb.collection("game_clicks").create({
-      game_name: gameName,
-      page_id: PAGE_ID,
-      track_id: id,
+
+  // --- ConfigCat ---
+  const logger = configcat.createConsoleLogger(configcat.LogLevel.Info);
+  const configCatClient = configcat.getClient(
+    "configcat-sdk-1/4ZveCKjyH0mHYVd1M0wDSQ/wdIMuHzTEEGrsBBY3oyNcQ",
+    configcat.PollingMode.AutoPoll,
+    { logger }
+  );
+
+  // --- Chunk crypto constants ---
+  const DEFAULT_KEY = 0xa5c3f17d;
+  const DEFAULT_DATA_KEY = "games-chunk-data-v1";
+  const CHUNK_DATA_MAGIC = new TextEncoder().encode("GDCHUNK1");
+  const CHUNK_DATA_IV_BYTES = 12;
+  const CHUNK_DATA_TAG_BYTES = 16;
+
+  const toHex4 = (v) => (v & 0xffff).toString(16).padStart(4, "0");
+  const toHex8 = (v) => (v >>> 0).toString(16).padStart(8, "0");
+  const rotl32 = (x, b) => ((x << b) | (x >>> (32 - b))) >>> 0;
+
+  function roundFunction(right16, subKey) {
+    let x = (right16 ^ (subKey & 0xffff)) >>> 0;
+    x ^= x >>> 7;
+    x = Math.imul(x, 0x45d9f3b) >>> 0;
+    x ^= x >>> 11;
+    return x & 0xffff;
+  }
+
+  function encodeChunkFileName(gameIdHex4, chunkIdHex4, keyHex8) {
+    const key = keyHex8 ? parseInt(keyHex8, 16) >>> 0 : DEFAULT_KEY;
+    const gameId = parseInt(gameIdHex4, 16) & 0xffff;
+    const chunkId = parseInt(chunkIdHex4, 16) & 0xffff;
+
+    let left = gameId,
+      right = chunkId;
+    for (let i = 0; i < 8; i++) {
+      const subKey =
+        (rotl32(key, (i * 5) % 32) ^ Math.imul(0x9e3779b9, i + 1)) >>> 0;
+      const nextLeft = right;
+      const nextRight = (left ^ roundFunction(right, subKey)) & 0xffff;
+      left = nextLeft;
+      right = nextRight;
+    }
+    return `${toHex8(((left << 16) >>> 0) | right)}.dat`;
+  }
+
+  function bytesStartWith(buf, prefix) {
+    if (buf.length < prefix.length) return false;
+    for (let i = 0; i < prefix.length; i++) if (buf[i] !== prefix[i]) return false;
+    return true;
+  }
+
+  function hexToBytes(hex) {
+    if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error("Invalid data key hex");
+    const out = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    return out;
+  }
+
+  async function deriveDefaultDataKeyBytes() {
+    const raw = new TextEncoder().encode(DEFAULT_DATA_KEY);
+    const hash = await crypto.subtle.digest("SHA-256", raw);
+    return new Uint8Array(hash);
+  }
+
+  async function getDataCryptoKey(game) {
+    const keyBytes = game.dataKeyHex
+      ? hexToBytes(game.dataKeyHex)
+      : await deriveDefaultDataKeyBytes();
+    return crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["decrypt"]);
+  }
+
+  async function decryptChunkIfNeeded(fileBytes, cryptoKey) {
+    if (!bytesStartWith(fileBytes, CHUNK_DATA_MAGIC)) return fileBytes;
+
+    const headerLength =
+      CHUNK_DATA_MAGIC.length + CHUNK_DATA_IV_BYTES + CHUNK_DATA_TAG_BYTES;
+    if (fileBytes.length < headerLength) throw new Error("Encrypted chunk is truncated");
+
+    const ivStart = CHUNK_DATA_MAGIC.length;
+    const tagStart = ivStart + CHUNK_DATA_IV_BYTES;
+    const ctStart = tagStart + CHUNK_DATA_TAG_BYTES;
+
+    const iv = fileBytes.slice(ivStart, tagStart);
+    const tag = fileBytes.slice(tagStart, ctStart);
+    const ciphertext = fileBytes.slice(ctStart);
+
+    // WebCrypto AES-GCM expects ciphertext||tag
+    const combined = new Uint8Array(ciphertext.length + tag.length);
+    combined.set(ciphertext, 0);
+    combined.set(tag, ciphertext.length);
+
+    const plain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv, tagLength: 128 },
+      cryptoKey,
+      combined
+    );
+    return new Uint8Array(plain);
+  }
+
+  async function fetchChunks(game, onUpdate) {
+    const progressMap = {};
+    const dataCryptoKey = await getDataCryptoKey(game);
+
+    const downloadChunk = async (i) => {
+      const fileName = encodeChunkFileName(game.gameIdHex4, toHex4(i), game.keyHex8);
+      const shortName = fileName.replace(".dat", "");
+      progressMap[i] = { name: shortName, loaded: 0, total: 0 };
+
+      const res = await fetch(`${game.url}/${fileName}`);
+      if (!res.ok) throw new Error(`Chunk ${shortName} failed`);
+
+      const total = parseInt(res.headers.get("content-length") || "0", 10);
+      progressMap[i].total = total;
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        // Fallback if streaming not available
+        const buf = new Uint8Array(await res.arrayBuffer());
+        const plainBytes = await decryptChunkIfNeeded(buf, dataCryptoKey);
+        return new TextDecoder().decode(plainBytes);
+      }
+
+      let received = 0;
+      const subChunks = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        subChunks.push(value);
+        received += value.length;
+        progressMap[i].loaded = received;
+        onUpdate(Object.values(progressMap));
+      }
+
+      const concatenated = new Uint8Array(received);
+      let offset = 0;
+      for (const sc of subChunks) {
+        concatenated.set(sc, offset);
+        offset += sc.length;
+      }
+
+      const plainBytes = await decryptChunkIfNeeded(concatenated, dataCryptoKey);
+      return new TextDecoder().decode(plainBytes);
+    };
+
+    const chunkPromises = [];
+    for (let i = 0; i < game.chunkCount; i++) chunkPromises.push(downloadChunk(i));
+    return (await Promise.all(chunkPromises)).join("");
+  }
+
+  // --- DOM ---
+  const container = document.getElementById("grid");
+  const filterInput = document.getElementById("filterInput");
+
+  function getContrast(hex) {
+    if (!hex) return "#ffffff";
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return (r * 299 + g * 587 + b * 114) / 1000 >= 128 ? "#000000" : "#ffffff";
+  }
+
+  filterInput?.addEventListener("input", (e) => {
+    const term = e.target.value.toLowerCase();
+    document.querySelectorAll(".btn").forEach((btn) => {
+      btn.classList.toggle("hidden", !btn.textContent.toLowerCase().includes(term));
     });
-  } catch (e) {
-    console.error("Tracking failed", e);
+  });
+
+  // --- PocketBase (tracking + cloud saves) ---
+  const PAGE_ID = "slunga_main";
+  const PB_URL = "https://slunga.westus2.cloudapp.azure.com:8091";
+  const pb = new PocketBase(PB_URL);
+  pb.autoCancellation(false);
+
+  async function getOrCreateTrackerId() {
+    let id = localStorage.getItem("tracker");
+    if (!id) {
+      const bytes = new Uint8Array(8);
+      crypto.getRandomValues(bytes);
+      id = Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      localStorage.setItem("tracker", id);
+    }
+    return id;
   }
-}
 
-        function roundFunction(right16, subKey) {
-            let x = (right16 ^ (subKey & 0xffff)) >>> 0;
-            x ^= x >>> 7;
-            x = Math.imul(x, 0x45d9f3b) >>> 0;
-            x ^= x >>> 11;
-            return x & 0xffff;
-        }
+  async function trackGameClick(gameName) {
+    const id = await getOrCreateTrackerId();
+    try {
+      await pb.collection("game_clicks").create({
+        game_name: gameName,
+        page_id: PAGE_ID,
+        track_id: id,
+      });
+    } catch (e) {
+      console.error("Tracking failed", e);
+    }
+  }
 
-        function encodeChunkFileName(gameIdHex4, chunkIdHex4, keyHex8) {
-            const key = keyHex8 ? parseInt(keyHex8, 16) >>> 0 : DEFAULT_KEY;
-            const gameId = parseInt(gameIdHex4, 16) & 0xffff;
-            const chunkId = parseInt(chunkIdHex4, 16) & 0xffff;
-            let left = gameId, right = chunkId;
-            for (let i = 0; i < 8; i++) {
-                const subKey = (rotl32(key, (i * 5) % 32) ^ Math.imul(0x9e3779b9, i + 1)) >>> 0;
-                const nextLeft = right;
-                const nextRight = (left ^ roundFunction(right, subKey)) & 0xffff;
-                left = nextLeft;
-                right = nextRight;
-            }
-            return `${toHex8(((left << 16) >>> 0) | right)}.dat`;
-        }
+  function setupGame(game) {
+    if (game.fontUrl && game.fontName) {
+      const isFile = /\.(ttf|otf|woff|woff2)$/i.test(game.fontUrl.split("?")[0]);
+      if (isFile) {
+        const s = document.createElement("style");
+        s.textContent = `@font-face { font-family: "${game.fontName}"; src: url("${game.fontUrl}"); font-display: swap; }`;
+        document.head.appendChild(s);
+      } else {
+        const l = document.createElement("link");
+        l.rel = "stylesheet";
+        l.href = game.fontUrl;
+        document.head.appendChild(l);
+      }
+    }
 
-        function bytesStartWith(buf, prefix) {
-            if (buf.length < prefix.length) return false;
-            for (let i = 0; i < prefix.length; i++) {
-                if (buf[i] !== prefix[i]) return false;
-            }
-            return true;
-        }
+    const b = document.createElement("a");
+    b.className = "btn";
+    b.textContent = game.name;
+    b.style.backgroundColor = game.color || "#333";
+    b.style.setProperty("color", getContrast(game.color), "important");
+    b.style.fontFamily = game.fontName ? `"${game.fontName}", monospace` : "sans-serif";
 
-        function hexToBytes(hex) {
-            if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error("Invalid data key hex");
-            const out = new Uint8Array(32);
-            for (let i = 0; i < 32; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-            return out;
-        }
+    b.onclick = async () => {
+      trackGameClick(game.name);
 
-        async function deriveDefaultDataKeyBytes() {
-            const raw = new TextEncoder().encode(DEFAULT_DATA_KEY);
-            const hash = await crypto.subtle.digest("SHA-256", raw);
-            return new Uint8Array(hash);
-        }
+      if (game.type === "direct") {
+        window.open(game.url, "_blank", "noopener,noreferrer");
+        return;
+      }
 
-        async function getDataCryptoKey(game) {
-            const keyBytes = game.dataKeyHex ? hexToBytes(game.dataKeyHex) : await deriveDefaultDataKeyBytes();
-            return crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["decrypt"]);
-        }
+      if (game.type === "proxy") {
+        alert("Proxy type games are currently broken.");
+        return;
+      }
 
-        async function decryptChunkIfNeeded(fileBytes, cryptoKey) {
-            if (!bytesStartWith(fileBytes, CHUNK_DATA_MAGIC)) {
-                return fileBytes;
-            }
+      b.classList.add("loading");
+      const win = window.open("about:blank", "_blank");
+      if (!win) {
+        alert("Pop-up blocked!");
+        b.classList.remove("loading");
+        return;
+      }
 
-            const headerLength = CHUNK_DATA_MAGIC.length + CHUNK_DATA_IV_BYTES + CHUNK_DATA_TAG_BYTES;
-            if (fileBytes.length < headerLength) {
-                throw new Error("Encrypted chunk is truncated");
-            }
-
-            const ivStart = CHUNK_DATA_MAGIC.length;
-            const tagStart = ivStart + CHUNK_DATA_IV_BYTES;
-            const ctStart = tagStart + CHUNK_DATA_TAG_BYTES;
-
-            const iv = fileBytes.slice(ivStart, tagStart);
-            const tag = fileBytes.slice(tagStart, ctStart);
-            const ciphertext = fileBytes.slice(ctStart);
-
-            const combined = new Uint8Array(ciphertext.length + tag.length);
-            combined.set(ciphertext, 0);
-            combined.set(tag, ciphertext.length);
-
-            const plain = await crypto.subtle.decrypt(
-                { name: "AES-GCM", iv, tagLength: 128 },
-                cryptoKey,
-                combined
-            );
-
-            return new Uint8Array(plain);
-        }
-
-        async function fetchChunks(game, onUpdate) {
-            const progressMap = {};
-            const dataCryptoKey = await getDataCryptoKey(game);
-
-            const downloadChunk = async (i) => {
-                const fileName = encodeChunkFileName(game.gameIdHex4, toHex4(i), game.keyHex8);
-                const shortName = fileName.replace(".dat", "");
-                progressMap[i] = { name: shortName, loaded: 0, total: 0 };
-
-                const res = await fetch(`${game.url}/${fileName}`);
-                if (!res.ok) throw new Error(`Chunk ${shortName} failed`);
-
-                const total = parseInt(res.headers.get("content-length") || "0", 10);
-                progressMap[i].total = total;
-
-                const reader = res.body.getReader();
-                let received = 0;
-                const subChunks = [];
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    subChunks.push(value);
-                    received += value.length;
-                    progressMap[i].loaded = received;
-                    onUpdate(Object.values(progressMap));
-                }
-
-                const concatenated = new Uint8Array(received);
-                let offset = 0;
-                for (const sc of subChunks) {
-                    concatenated.set(sc, offset);
-                    offset += sc.length;
-                }
-
-                const plainBytes = await decryptChunkIfNeeded(concatenated, dataCryptoKey);
-                return new TextDecoder().decode(plainBytes);
-            };
-
-            const chunkPromises = [];
-            for (let i = 0; i < game.chunkCount; i++) chunkPromises.push(downloadChunk(i));
-            return (await Promise.all(chunkPromises)).join("");
-        }
-
-        const container = document.getElementById("grid");
-        const filterInput = document.getElementById("filterInput");
-
-        function getContrast(hex) {
-            if (!hex) return "#ffffff";
-            const r = parseInt(hex.slice(1, 3), 16);
-            const g = parseInt(hex.slice(3, 5), 16);
-            const b = parseInt(hex.slice(5, 7), 16);
-            return ((r * 299) + (g * 587) + (b * 114)) / 1000 >= 128 ? "#000000" : "#ffffff";
-        }
-
-        filterInput.addEventListener("input", (e) => {
-            const term = e.target.value.toLowerCase();
-            document.querySelectorAll(".btn").forEach((btn) => {
-                btn.classList.toggle("hidden", !btn.textContent.toLowerCase().includes(term));
-            });
-        });
-
-        function setupGame(game) {
-            if (game.fontUrl && game.fontName) {
-                const isFile = /\.(ttf|otf|woff|woff2)$/i.test(game.fontUrl.split("?")[0]);
-                if (isFile) {
-                    const s = document.createElement("style");
-                    s.textContent = `@font-face { font-family: "${game.fontName}"; src: url("${game.fontUrl}"); font-display: swap; }`;
-                    document.head.appendChild(s);
-                } else {
-                    const l = document.createElement("link");
-                    l.rel = "stylesheet";
-                    l.href = game.fontUrl;
-                    document.head.appendChild(l);
-                }
-            }
-
-            const b = document.createElement("a");
-            b.className = "btn";
-            b.textContent = game.name;
-            b.style.backgroundColor = game.color || "#333";
-            b.style.setProperty("color", getContrast(game.color), "important");
-            b.style.fontFamily = game.fontName ? `"${game.fontName}", monospace` : "sans-serif";
-
-            b.onclick = async () => {
-                trackGameClick(game.name);
-                if (game.type === "direct") {
-                    window.open(game.url, "_blank", "noopener,noreferrer");
-                    return;
-                }
-
-                if (game.type === "proxy") {
-                    alert("Proxy type games are currently broken.");
-                    return;
-                    b.classList.add("loading");
-
-                    //const xor = game.url.split('').map((c, i) => i % 2 ? String.fromCharCode(c.charCodeAt(0) ^ 2) : c).join('');
-                    //const encodedId = btoa(xor);
-                    const encodedId = encodeURIComponent(game.url);
-                    const proxyUrl = `https://slunga.westus2.cloudapp.azure.com/go.html?id=${encodedId}`;
-
-                    const win = window.open("about:blank", "_blank");
-                    if (!win) {
-                        alert("Pop-up blocked!");
-                        b.classList.remove("loading");
-                        return;
-                    }
-
-                    win.document.write(`
-            <style>
-                body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background: #000; }
-                iframe { border: none; width: 100vw; height: 100vh; }
-            </style>
-            <iframe src="${proxyUrl}" allow="fullscreen; clipboard-read; clipboard-write; microphone; camera; focus-without-user-activation"></iframe>
-        `);
-                    win.document.close();
-
-                    b.classList.remove("loading");
-                    return;
-                }
-
-                b.classList.add("loading");
-                const win = window.open("about:blank", "_blank");
-                if (!win) {
-                    alert("Pop-up blocked!");
-                    b.classList.remove("loading");
-                    return;
-                }
-
-                const loadingHTML = `
+      const loadingHTML = `
         <style>
           body { background: #000; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; font-family: system-ui, sans-serif; }
           #status { width: 320px; }
@@ -477,295 +478,360 @@ async function trackGameClick(gameName) {
         <body>
           <h2>Preparing ${game.name}</h2>
           <div id="status"></div>
-          <img src="https://cdn.jsdelivr.net/gh/Student-led-Educational-Opportunities/assets@master/landscape_ad.gif" alt="ad"></img>
+          <img src="https://cdn.jsdelivr.net/gh/Student-led-Educational-Opportunities/assets@master/landscape_ad.gif" alt="ad" />
         </body>
       `;
 
-                win.document.write(loadingHTML);
-                const statusEl = win.document.getElementById("status");
+      win.document.write(loadingHTML);
+      const statusEl = win.document.getElementById("status");
 
-                try {
-                    let htmlContent;
+      try {
+        let htmlContent;
 
-                    if (game.chunkCount && game.chunkCount > 0) {
-                        htmlContent = await fetchChunks(game, (stats) => {
-                            statusEl.innerHTML = stats.map((s) => {
-                                const rawPct = s.total > 0 ? (s.loaded / s.total) * 100 : 0;
-                                const pct = Math.min(100, Math.round(rawPct));
-                                const mb = (s.loaded / (1024 * 1024)).toFixed(1);
-                                const displayLabel = s.total > 0 ? `${pct}%` : `${mb}MB`;
-                                return `
-                <div class="chunk-row"><span>Chunk ${s.name}</span><span>${displayLabel}</span></div>
-                <div class="bar-bg"><div class="bar-fill" style="width: ${s.total > 0 ? pct : 100}%"></div></div>
-              `;
-                            }).join("");
-                        });
-                    } else {
-                        const res = await fetch(`${game.url}?t=${Date.now()}`, { cache: "no-store" });
-                        if (!res.ok) throw new Error("Fetch failed.");
-                        htmlContent = await res.text();
-                    }
-
-                    win.document.open();
-                    win.document.write(htmlContent);
-                    win.document.close();
-                    const checkTab = setInterval(() => {
-                        if (win.closed) {
-                            clearInterval(checkTab);
-                            document.getElementById('sync-indicator').innerHTML = "Ready";
-                            document.getElementById('sync-overlay').style.opacity = "1";
-                            document.getElementById('sync-overlay').style.pointerEvents = "auto";
-                        } else {
-                            document.getElementById('sync-indicator').innerHTML = "Game Active";
-                            document.getElementById('sync-overlay').style.opacity = "0.5";
-                            document.getElementById('sync-overlay').style.pointerEvents = "none";
-                        }
-                    }, 1000);
-                } catch (e) {
-                    if (statusEl) statusEl.innerHTML = `<div style="color:#ff6b6b;font-size:0.9rem;">Load Error: ${e.message}</div>`;
-                } finally {
-                    b.classList.remove("loading");
-                }
-            };
-
-            container.appendChild(b);
+        if (game.chunkCount && game.chunkCount > 0) {
+          htmlContent = await fetchChunks(game, (stats) => {
+            statusEl.innerHTML = stats
+              .map((s) => {
+                const rawPct = s.total > 0 ? (s.loaded / s.total) * 100 : 0;
+                const pct = Math.min(100, Math.round(rawPct));
+                const mb = (s.loaded / (1024 * 1024)).toFixed(1);
+                const displayLabel = s.total > 0 ? `${pct}%` : `${mb}MB`;
+                return `
+                  <div class="chunk-row"><span>Chunk ${s.name}</span><span>${displayLabel}</span></div>
+                  <div class="bar-bg"><div class="bar-fill" style="width: ${s.total > 0 ? pct : 100}%"></div></div>
+                `;
+              })
+              .join("");
+          });
+        } else {
+          const res = await fetch(`${game.url}?t=${Date.now()}`, { cache: "no-store" });
+          if (!res.ok) throw new Error("Fetch failed.");
+          htmlContent = await res.text();
         }
 
-        // PocketBase Configuration
-        const SYNC_PB_URL = 'https://slunga.westus2.cloudapp.azure.com:8091';
-        const MAX_DB_SIZE = 5 * 1024 * 1024; // 5MB Limit
-        
-window.addEventListener('load', () => {
-    const savedToken = localStorage.getItem('slunga_token');
-    if (savedToken) {
-        document.getElementById('sync-token').value = savedToken;
-    }
-});
+        win.document.open();
+        win.document.write(htmlContent);
+        win.document.close();
 
-        // Universal Database Exporter
-        async function exportSingleDatabase(dbName) {
-            return new Promise((resolve) => {
-                const req = indexedDB.open(dbName);
-                req.onsuccess = async (e) => {
-                    const db = e.target.result;
-                    const exportData = {};
-                    const storeNames = Array.from(db.objectStoreNames);
-                    if (storeNames.length === 0) { db.close(); return resolve({}); }
-                    const tx = db.transaction(storeNames, 'readonly');
-                    await Promise.all(storeNames.map(name => {
-                        return new Promise(res => {
-                            tx.objectStore(name).getAll().onsuccess = (ev) => {
-                                exportData[name] = ev.target.result;
-                                res();
-                            };
-                        });
-                    }));
-                    db.close();
-                    resolve(exportData);
+        const checkTab = setInterval(() => {
+          if (win.closed) {
+            clearInterval(checkTab);
+            document.getElementById("sync-indicator").innerHTML = "Ready";
+            document.getElementById("sync-overlay").style.opacity = "1";
+            document.getElementById("sync-overlay").style.pointerEvents = "auto";
+          } else {
+            document.getElementById("sync-indicator").innerHTML = "Game Active";
+            document.getElementById("sync-overlay").style.opacity = "0.5";
+            document.getElementById("sync-overlay").style.pointerEvents = "none";
+          }
+        }, 1000);
+      } catch (e) {
+        if (statusEl) {
+          statusEl.innerHTML = `<div style="color:#ff6b6b;font-size:0.9rem;">Load Error: ${e.message}</div>`;
+        }
+      } finally {
+        b.classList.remove("loading");
+      }
+    };
+
+    container.appendChild(b);
+  }
+
+  // --- Cloud save/export/import ---
+  const MAX_DB_SIZE = 5 * 1024 * 1024; // 5MB
+
+  window.addEventListener("load", () => {
+    const savedToken = localStorage.getItem("slunga_token");
+    if (savedToken) document.getElementById("sync-token").value = savedToken;
+  });
+
+  async function exportSingleDatabase(dbName) {
+    return new Promise((resolve) => {
+      const req = indexedDB.open(dbName);
+      req.onsuccess = async (e) => {
+        const db = e.target.result;
+        const exportData = {};
+        const storeNames = Array.from(db.objectStoreNames);
+
+        if (storeNames.length === 0) {
+          db.close();
+          resolve({});
+          return;
+        }
+
+        const tx = db.transaction(storeNames, "readonly");
+        await Promise.all(
+          storeNames.map(
+            (name) =>
+              new Promise((res) => {
+                tx.objectStore(name).getAll().onsuccess = (ev) => {
+                  exportData[name] = ev.target.result;
+                  res();
                 };
-                req.onerror = () => resolve({});
-            });
-        }
+              })
+          )
+        );
+        db.close();
+        resolve(exportData);
+      };
+      req.onerror = () => resolve({});
+    });
+  }
 
-        // Global Backup Function (supports overwriting an existing record when a token is present)
-        window.backupData = async function () {
-            const status = document.getElementById('sync-status');
-            const token = document.getElementById('sync-token').value.trim();
-            status.innerText = "Scanning databases...";
-            status.style.color = "#94a3b8";
-            localStorage.setItem('slunga_token', token);
+  window.backupData = async function backupData() {
+    const status = document.getElementById("sync-status");
+    const token = document.getElementById("sync-token").value.trim();
 
-            const dbs = await indexedDB.databases();
-            let idbPayload = {};
-            let localPayload = { ...localStorage };
+    status.innerText = "Scanning databases...";
+    status.style.color = "#94a3b8";
 
-            for (const dbInfo of dbs) {
-                const data = await exportSingleDatabase(dbInfo.name);
-                const size = new Blob([JSON.stringify(data)]).size;
-                if (size < MAX_DB_SIZE) idbPayload[dbInfo.name] = data;
-            }
+    // Only persist token if non-empty; otherwise leave previous token intact
+    if (token) localStorage.setItem("slunga_token", token);
 
-            try {
-                let res;
-    if (token) {
-      record = await pb.collection("cloud_saves").update(token, {
-        save_data: { localStorage: localPayload, indexedDB: idbPayload },
-      });
-      status.innerText = "Save overwritten!";
-    } else {
-      record = await pb.collection("cloud_saves").create({
-        save_data: { localStorage: localPayload, indexedDB: idbPayload },
-      });
-      status.innerText = "Backup complete!";
+    const dbs = await indexedDB.databases();
+    const idbPayload = {};
+    const localPayload = { ...localStorage };
+
+    for (const dbInfo of dbs) {
+      if (!dbInfo?.name) continue;
+      const data = await exportSingleDatabase(dbInfo.name);
+      const size = new Blob([JSON.stringify(data)]).size;
+      if (size < MAX_DB_SIZE) idbPayload[dbInfo.name] = data;
     }
-                const record = await res.json();
-                document.getElementById('sync-token').value = record.id;
-                status.style.color = "#10b981";
-            } catch (e) { status.innerText = "Backup failed."; status.style.color = "#ef4444"; }
-        };
 
-        // Local file export — no size limit applied
-        window.localDownload = async function () {
-            const status = document.getElementById('sync-status');
-            status.innerText = "Preparing download...";
-            status.style.color = "#94a3b8";
+    try {
+      let record;
+      if (token) {
+        record = await pb.collection("cloud_saves").update(token, {
+          save_data: { localStorage: localPayload, indexedDB: idbPayload },
+        });
+        status.innerText = "Save overwritten!";
+      } else {
+        record = await pb.collection("cloud_saves").create({
+          save_data: { localStorage: localPayload, indexedDB: idbPayload },
+        });
+        status.innerText = "Backup complete!";
+      }
 
-            const dbs = await indexedDB.databases();
-            let idbPayload = {};
-            let localPayload = { ...localStorage };
+      document.getElementById("sync-token").value = record.id;
+      localStorage.setItem("slunga_token", record.id);
 
-            for (const dbInfo of dbs) {
-                idbPayload[dbInfo.name] = await exportSingleDatabase(dbInfo.name);
-            }
+      status.style.color = "#10b981";
+    } catch (e) {
+      console.error(e);
+      status.innerText = "Backup failed.";
+      status.style.color = "#ef4444";
+    }
+  };
 
-            const blob = new Blob([JSON.stringify({ localStorage: localPayload, indexedDB: idbPayload })], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'slunga_save.json';
-            a.click();
-            URL.revokeObjectURL(url);
-            status.innerText = "Downloaded!";
-            status.style.color = "#10b981";
-        };
+  window.localDownload = async function localDownload() {
+    const status = document.getElementById("sync-status");
+    status.innerText = "Preparing download...";
+    status.style.color = "#94a3b8";
 
-        // Local file import — restore localStorage and IndexedDB from a previously exported file
-        window.localImport = async function (file) {
-            if (!file) return;
-            const status = document.getElementById('sync-status');
-            const bar = document.getElementById('sync-progress-bar');
-            const progressContainer = document.getElementById('sync-progress-container');
-            status.innerText = "Reading file...";
-            status.style.color = "#94a3b8";
+    const dbs = await indexedDB.databases();
+    const idbPayload = {};
+    const localPayload = { ...localStorage };
 
-            try {
-                const savedData = JSON.parse(await file.text());
+    for (const dbInfo of dbs) {
+      if (!dbInfo?.name) continue;
+      idbPayload[dbInfo.name] = await exportSingleDatabase(dbInfo.name);
+    }
 
-                localStorage.clear();
-                Object.entries(savedData.localStorage || {}).forEach(([k, v]) => localStorage.setItem(k, v));
+    const blob = new Blob([JSON.stringify({ localStorage: localPayload, indexedDB: idbPayload })], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "slunga_save.json";
+    a.click();
+    URL.revokeObjectURL(url);
 
-                if (savedData.indexedDB) {
-                    progressContainer.style.display = 'block';
-                    let total = 0, current = 0;
-                    Object.values(savedData.indexedDB).forEach(db => Object.values(db).forEach(s => total += s.length));
+    status.innerText = "Downloaded!";
+    status.style.color = "#10b981";
+  };
 
-                    for (const [dbName, stores] of Object.entries(savedData.indexedDB)) {
-                        await new Promise((resolve) => {
-                            const del = indexedDB.deleteDatabase(dbName);
-                            const proceed = () => {
-                                const open = indexedDB.open(dbName, 1);
-                                open.onupgradeneeded = (e) => {
-                                    Object.keys(stores).forEach(s => e.target.result.createObjectStore(s, { autoIncrement: true }));
-                                };
-                                open.onsuccess = (e) => {
-                                    const db = e.target.result;
-                                    const tx = db.transaction(Object.keys(stores), 'readwrite');
-                                    tx.oncomplete = () => { db.close(); resolve(); };
-                                    Object.entries(stores).forEach(([sName, records]) => {
-                                        records.forEach(r => {
-                                            tx.objectStore(sName).put(r).onsuccess = () => {
-                                                current++;
-                                                bar.style.width = `${Math.floor((current / total) * 100)}%`;
-                                            };
-                                        });
-                                    });
-                                };
-                                open.onerror = () => resolve();
-                            };
-                            del.onsuccess = proceed;
-                            del.onerror = proceed;
-                        });
-                    }
-                }
-                status.innerText = "Imported! Refreshing...";
-                status.style.color = "#10b981";
-                setTimeout(() => location.reload(), 1000);
-            } catch (e) {
-                status.innerText = "Import failed.";
-                status.style.color = "#ef4444";
-            }
-        };
+  window.localImport = async function localImport(file) {
+    if (!file) return;
 
-        // Global Restore Function
-        window.restoreData = async function () {
-            const token = document.getElementById('sync-token').value;
-            const status = document.getElementById('sync-status');
-            const bar = document.getElementById('sync-progress-bar');
-            const container = document.getElementById('sync-progress-container');
+    const status = document.getElementById("sync-status");
+    const bar = document.getElementById("sync-progress-bar");
+    const progressContainer = document.getElementById("sync-progress-container");
 
-            if (!token) return alert("Enter a token first!");
-            status.innerText = "Downloading...";
+    status.innerText = "Reading file...";
+    status.style.color = "#94a3b8";
 
-            try {
-    const record = await pb.collection("cloud_saves").getOne(token);
-    const savedData = record.save_data;
+    try {
+      const savedData = JSON.parse(await file.text());
 
-                // Restore LocalStorage
-                localStorage.clear();
-                Object.entries(savedData.localStorage || {}).forEach(([k, v]) => localStorage.setItem(k, v));
+      localStorage.clear();
+      Object.entries(savedData.localStorage || {}).forEach(([k, v]) => localStorage.setItem(k, v));
 
-                // Restore IndexedDB
-                if (savedData.indexedDB) {
-                    container.style.display = 'block';
-                    let total = 0, current = 0;
-                    Object.values(savedData.indexedDB).forEach(db => Object.values(db).forEach(s => total += s.length));
+      if (savedData.indexedDB) {
+        progressContainer.style.display = "block";
+        let total = 0,
+          current = 0;
+        Object.values(savedData.indexedDB).forEach((db) =>
+          Object.values(db).forEach((s) => (total += s.length))
+        );
 
-                    for (const [dbName, stores] of Object.entries(savedData.indexedDB)) {
-                        await new Promise((resolve) => {
-                            const del = indexedDB.deleteDatabase(dbName);
-                            del.onsuccess = () => {
-                                const open = indexedDB.open(dbName, 1);
-                                open.onupgradeneeded = (e) => {
-                                    Object.keys(stores).forEach(s => e.target.result.createObjectStore(s, { autoIncrement: true }));
-                                };
-                                open.onsuccess = (e) => {
-                                    const db = e.target.result;
-                                    const tx = db.transaction(Object.keys(stores), 'readwrite');
-                                    tx.oncomplete = () => { db.close(); resolve(); };
-                                    Object.entries(stores).forEach(([sName, records]) => {
-                                        records.forEach(r => {
-                                            tx.objectStore(sName).put(r).onsuccess = () => {
-                                                current++;
-                                                bar.style.width = `${Math.floor((current / total) * 100)}%`;
-                                            };
-                                        });
-                                    });
-                                };
-                            };
-                        });
-                    }
-                }
-                status.innerText = "Success! Refreshing...";
-                setTimeout(() => location.reload(), 1000);
-            } catch (e) { status.innerText = "Restore failed."; }
-        };
+        for (const [dbName, stores] of Object.entries(savedData.indexedDB)) {
+          await new Promise((resolve) => {
+            const del = indexedDB.deleteDatabase(dbName);
+            const proceed = () => {
+              const open = indexedDB.open(dbName, 1);
+              open.onupgradeneeded = (e) => {
+                Object.keys(stores).forEach((s) =>
+                  e.target.result.createObjectStore(s, { autoIncrement: true })
+                );
+              };
+              open.onsuccess = (e) => {
+                const db = e.target.result;
+                const tx = db.transaction(Object.keys(stores), "readwrite");
+                tx.oncomplete = () => {
+                  db.close();
+                  resolve();
+                };
 
-        async function loadManifest() {
-            const enabled = await configCatClient.getValueAsync("enabled", false);
-            if (!enabled) {
-                container.innerHTML = "<div class='error-msg'>Disabled by SLUNGA</div>";
-                return;
-            }
-            try {
-                const url = `https://raw.githubusercontent.com/Student-led-Educational-Opportunities/games/refs/heads/master/manifest.json?t=${Date.now()}`;
-                const response = await fetch(url, { cache: "no-store" });
-                const games = await response.json();
-                games.forEach(setupGame);
-            } catch (e) {
-                container.innerHTML = `<div class='error-msg'>System Offline</div>`;
-            }
+                Object.entries(stores).forEach(([sName, records]) => {
+                  records.forEach((r) => {
+                    tx.objectStore(sName).put(r).onsuccess = () => {
+                      current++;
+                      bar.style.width = `${Math.floor((current / total) * 100)}%`;
+                    };
+                  });
+                });
+              };
+              open.onerror = () => resolve();
+            };
+            del.onsuccess = proceed;
+            del.onerror = proceed;
+          });
         }
-            const urlParams = new URLSearchParams(window.location.search);
-const token = urlParams.get('token');
+      }
 
-const isValid = await pb.collection('tokens').getFirstListItem(`token="${token}"`);
+      status.innerText = "Imported! Refreshing...";
+      status.style.color = "#10b981";
+      setTimeout(() => location.reload(), 1000);
+    } catch (e) {
+      console.error(e);
+      status.innerText = "Import failed.";
+      status.style.color = "#ef4444";
+    }
+  };
 
-if (!isValid) {
-    window.location.href = "about:blank";
-}
+  window.restoreData = async function restoreData() {
+    const token = document.getElementById("sync-token").value.trim();
+    const status = document.getElementById("sync-status");
+    const bar = document.getElementById("sync-progress-bar");
+    const progressContainer = document.getElementById("sync-progress-container");
 
-        loadManifest();
-    </script>
+    if (!token) return alert("Enter a token first!");
+    status.innerText = "Downloading...";
+    status.style.color = "#94a3b8";
+
+    try {
+      const record = await pb.collection("cloud_saves").getOne(token);
+      const savedData = record.save_data;
+
+      localStorage.clear();
+      Object.entries(savedData.localStorage || {}).forEach(([k, v]) => localStorage.setItem(k, v));
+
+      if (savedData.indexedDB) {
+        progressContainer.style.display = "block";
+        let total = 0,
+          current = 0;
+        Object.values(savedData.indexedDB).forEach((db) =>
+          Object.values(db).forEach((s) => (total += s.length))
+        );
+
+        for (const [dbName, stores] of Object.entries(savedData.indexedDB)) {
+          await new Promise((resolve) => {
+            const del = indexedDB.deleteDatabase(dbName);
+            del.onsuccess = () => {
+              const open = indexedDB.open(dbName, 1);
+              open.onupgradeneeded = (e) => {
+                Object.keys(stores).forEach((s) =>
+                  e.target.result.createObjectStore(s, { autoIncrement: true })
+                );
+              };
+              open.onsuccess = (e) => {
+                const db = e.target.result;
+                const tx = db.transaction(Object.keys(stores), "readwrite");
+                tx.oncomplete = () => {
+                  db.close();
+                  resolve();
+                };
+
+                Object.entries(stores).forEach(([sName, records]) => {
+                  records.forEach((r) => {
+                    tx.objectStore(sName).put(r).onsuccess = () => {
+                      current++;
+                      bar.style.width = `${Math.floor((current / total) * 100)}%`;
+                    };
+                  });
+                });
+              };
+              open.onerror = () => resolve();
+            };
+            del.onerror = () => resolve();
+          });
+        }
+      }
+
+      status.innerText = "Success! Refreshing...";
+      status.style.color = "#10b981";
+      setTimeout(() => location.reload(), 1000);
+    } catch (e) {
+      console.error(e);
+      status.innerText = "Restore failed.";
+      status.style.color = "#ef4444";
+    }
+  };
+
+  // --- Manifest loader ---
+  async function loadManifest() {
+    const enabled = await configCatClient.getValueAsync("enabled", false);
+    if (!enabled) {
+      container.innerHTML = "<div class='error-msg'>Disabled by SLUNGA</div>";
+      return;
+    }
+    try {
+      const url = `https://raw.githubusercontent.com/Student-led-Educational-Opportunities/games/refs/heads/master/manifest.json?t=${Date.now()}`;
+      const response = await fetch(url, { cache: "no-store" });
+      const games = await response.json();
+      games.forEach(setupGame);
+    } catch (e) {
+      console.error(e);
+      container.innerHTML = "<div class='error-msg'>System Offline</div>";
+    }
+  }
+
+  // --- Token gate (won't crash the module if invalid/missing) ---
+  async function enforceTokenGate() {
+    if (!tokenParam) return false;
+
+    try {
+      // Will throw if not found
+      await pb.collection("tokens").getFirstListItem(`token="${tokenParam}"`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  (async () => {
+    const ok = await enforceTokenGate();
+    if (!ok) {
+      // keep behavior close to original but avoid throwing
+      window.location.href = "about:blank";
+      return;
+    }
+    await loadManifest();
+  })();
+})();
+</script>
 </body>
 
 </html>
