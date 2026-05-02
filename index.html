@@ -206,11 +206,12 @@
         const urlParams = new URLSearchParams(window.location.search);
         const authn = urlParams.get('authn');
         const dialog = document.querySelector("dialog");
-        if (authn != "slungaofficial") {
+        const referrer = document.referrer;
+        if (authn != "slungaofficial" || !referrer || !referrer.includes("sites.google.com/students.wcpss.net/slunga") {
             dialog.showModal();
             document.getElementById('sync-overlay').innerHTML = `<div style="font-weight: bold; margin-bottom: 10px; display: flex; justify-content: space-between;">
             <span>SlungaCloud Game Saves</span>
-            <span style="color: #ff0000;">Disabled on third-party sites</span>
+            <span style="color: #ff0000;">Disabled on third-party sites. "${referrer}" is not official.</span>
         </div>`;
         }
             
