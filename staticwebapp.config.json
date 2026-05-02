@@ -3,7 +3,6 @@
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Embedder-Policy": "unsafe-none", 
     "Cross-Origin-Resource-Policy": "cross-origin",
-    "Permissions-Policy": "interest-cohort=()",
-    "Content-Security-Policy": "frame-ancestors 'self' https://sites.google.com/students.wcpss.net/slunga;"
+    "Permissions-Policy": "interest-cohort=()"
   }
 }
