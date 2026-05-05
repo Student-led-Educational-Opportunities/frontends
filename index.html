@@ -836,6 +836,8 @@ try {
     const ok = await enforceTokenGate();
     if (!ok) {
       // keep behavior close to original but avoid throwing
+      alert("stop pirating slunga.");
+      window.open("https://sites.google.com/students.wcpss.net/slunga/games", "_blank");
       window.location.href = "about:blank";
       return;
     }
