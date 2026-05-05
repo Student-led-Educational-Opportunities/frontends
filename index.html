@@ -812,14 +812,24 @@ import PocketBase from "https://esm.sh/pocketbase@0.22.0";
   async function enforceTokenGate() {
     if (!tokenParam) return false;
 
-    try {
-      // Will throw if not found
-      await pb.collection("tokens").getFirstListItem(`token="${tokenParam}"`);
-      return true;
-    } catch (e) {
-        alert(e);
-      return false;
-    }
+try {
+  // 1. Fetch the token record
+  const token = await pb.collection("tokens").getFirstListItem(`token="${tokenParam}"`);
+  
+  // 2. Parse the expiration date and compare
+  // PocketBase returns dates as ISO strings; convert to Date object for comparison
+  const expiryDate = new Date(token.expires);
+  
+  if (expiryDate < new Date()) {
+    return false; // Token has expired
+  }
+
+  return true; // Token is valid
+} catch (e) {
+  // getFirstListItem throws a 404 if no item matches the filter
+  console.error("Token validation failed:", e);
+  return false;
+}
   }
 
   (async () => {
